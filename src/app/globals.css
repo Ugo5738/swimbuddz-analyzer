@@ -9,3 +9,23 @@
 body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
+
+.legal {
+  @apply space-y-4 text-slate-700;
+}
+.legal h1 {
+  @apply text-2xl font-bold text-slate-900;
+}
+.legal h2 {
+  @apply mt-6 text-lg font-semibold text-slate-900;
+}
+.legal p,
+.legal li {
+  @apply text-sm leading-relaxed;
+}
+.legal ul {
+  @apply list-disc space-y-1 pl-5;
+}
+.legal a {
+  @apply text-brand-700 underline;
+}
