@@ -1,0 +1,24 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+# Same-origin API proxy: browser fetches /api/* are forwarded server-side to the
+# gateway, so no CORS is triggered for normal traffic. (Mirrors the main app.)
+[[redirects]]
+  from = "/api/*"
+  to = "https://api.swimbuddz.com/api/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    # The emailed result link carries a bearer token in the URL — never leak it
+    # via Referer to third-party assets (design §5.6).
+    Referrer-Policy = "no-referrer"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
