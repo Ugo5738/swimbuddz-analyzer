@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, CheckCircle2, Loader2, Upload, Waves } from "lucide-react";
+import { Activity, ArrowLeft, CheckCircle2, Loader2, Upload, Waves } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import {
@@ -99,7 +99,15 @@ export default function Home() {
     [run],
   );
 
-  if (phase === "queued" && job) return <Queued email={email} job={job} />;
+  const reset = useCallback(() => {
+    setPhase("idle");
+    setJob(null);
+    setError("");
+    fileRef.current = null;
+  }, []);
+
+  if (phase === "queued" && job)
+    return <Queued email={email} job={job} onReset={reset} />;
   if (phase === "paywall")
     return (
       <Paywall
@@ -228,14 +236,20 @@ function Working({ msg, progress }: { msg: string; progress: number }) {
   );
 }
 
-function Queued({ email, job }: { email: string; job: PublicAnalysisJob }) {
+function Queued({
+  email,
+  job,
+  onReset,
+}: {
+  email: string;
+  job: PublicAnalysisJob;
+  onReset: () => void;
+}) {
   return (
     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center">
       <CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={40} />
       <h2 className="text-xl font-bold">You&apos;re in the queue</h2>
-      <p className="mt-2 text-slate-700">
-        {job.estimated_ready_hint}
-      </p>
+      <p className="mt-2 text-slate-700">{job.estimated_ready_hint}</p>
       <p className="mt-1 text-sm text-slate-500">
         We&apos;ll email <strong>{email}</strong> a link as soon as your analysis
         is ready. You can close this tab.
@@ -243,6 +257,12 @@ function Queued({ email, job }: { email: string; job: PublicAnalysisJob }) {
       <p className="mt-4 text-xs text-slate-400">
         Credits remaining: {job.credits_remaining}
       </p>
+      <button
+        onClick={onReset}
+        className="mt-6 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+      >
+        <ArrowLeft size={16} /> Analyze another clip
+      </button>
     </div>
   );
 }
