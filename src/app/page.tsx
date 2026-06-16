@@ -1,7 +1,6 @@
 "use client";
 
 import { Activity, CheckCircle2, Loader2, Upload, Waves } from "lucide-react";
-import Script from "next/script";
 import { useCallback, useRef, useState } from "react";
 
 import {
@@ -287,9 +286,6 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
 
   return (
     <div className="space-y-6">
-      {/* Loads Gumroad's overlay so .gumroad-button links open checkout on-page
-          (graceful fallback: without JS the links open the product page). */}
-      <Script src="https://gumroad.com/js/gumroad.js" strategy="afterInteractive" />
       <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
         <Activity className="mx-auto mb-3 text-brand-600" size={28} />
         <h2 className="text-xl font-bold">You&apos;ve used your free analysis</h2>
@@ -306,7 +302,7 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
             href={`${GUMROAD_CHECKOUT_BASE}${p.permalink}`}
             target="_blank"
             rel="noreferrer"
-            className={`gumroad-button rounded-xl border p-4 text-center transition hover:shadow-md ${
+            className={`rounded-xl border p-4 text-center transition hover:shadow-md ${
               "featured" in p && p.featured
                 ? "border-brand-500 bg-brand-50"
                 : "border-slate-200 bg-white"
