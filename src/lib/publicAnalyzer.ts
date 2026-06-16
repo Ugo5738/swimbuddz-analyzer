@@ -156,10 +156,13 @@ export async function getPublicAnalysis(
   jobId: string,
   guestToken: string,
 ): Promise<PublicAnalysisJobDetail> {
-  const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/analyze/${jobId}`, {
-    headers: { "X-Guest-Token": guestToken },
-    cache: "no-store",
-  });
+  // Token goes in the query string, not an X-Guest-Token header: cross-origin the
+  // gateway's CORS allow-headers doesn't include that custom header (preflight
+  // would 400), and the backend accepts ?guest_token= (same as the email link).
+  const resp = await fetch(
+    `${API_BASE_URL}/api/v1/ai/public/analyze/${jobId}?guest_token=${encodeURIComponent(guestToken)}`,
+    { cache: "no-store" },
+  );
   if (!resp.ok) throw await toError(resp);
   return (await resp.json()) as PublicAnalysisJobDetail;
 }
