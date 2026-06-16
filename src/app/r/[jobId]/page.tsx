@@ -117,7 +117,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           {detail.status === "pending" ? "Queued" : "Analyzing your stroke…"}
         </p>
         <p className="mt-1 text-sm text-slate-500">
-          This takes a few hours. We&apos;ll email you — or leave this open and
+          We&apos;ll email you when it&apos;s ready — or leave this open and
           it&apos;ll refresh itself.
         </p>
       </Centered>
