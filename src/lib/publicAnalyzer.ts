@@ -28,6 +28,36 @@ export type Observation = {
 
 export type TrackingGap = { start_s: number; end_s: number; duration_s: number };
 
+// ── VLM-coach result (the new pipeline; mirrors the backend PipelineResult) ──
+export type CoachFinding = {
+  component: string;
+  observation: string;
+  severity: string; // "fix" | "strength" | "info" | "unavailable"
+  evidence_frames: { index: number; timestamp_s: number }[];
+  confidence: number;
+  available: boolean;
+  instance_id: number | null;
+  area: string | null;
+  extra: Record<string, unknown>;
+};
+
+export type CoachComponentResult = {
+  component: string;
+  findings: CoachFinding[];
+  cost_usd: number;
+  error: string | null;
+  meta: Record<string, unknown>;
+};
+
+export type CoachResult = {
+  input_profile: string;
+  gate_tier: "clean" | "borderline" | "refuse" | string;
+  results: CoachComponentResult[];
+  total_cost_usd: number;
+  refused: boolean;
+  meta: Record<string, unknown>;
+};
+
 export type AnalysisResultPayload = {
   detected_stroke: string;
   pose_detection_rate: number;
@@ -41,6 +71,9 @@ export type AnalysisResultPayload = {
   summary_text: string | null;
   observations: Observation[];
   tracking_gaps: TrackingGap[];
+  coach_result: CoachResult | null;
+  coach_evidence_urls: Record<string, string> | null;
+  coach_share_urls: Record<string, string> | null;
 };
 
 export type PublicAnalysisJob = {

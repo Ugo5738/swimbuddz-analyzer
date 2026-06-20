@@ -7,6 +7,8 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   type AnalysisResultPayload,
+  type CoachFinding,
+  type CoachResult,
   failureMessage,
   fmtTime,
   getPublicAnalysis,
@@ -178,6 +180,14 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             </p>
           ) : null}
 
+          {r.coach_result ? (
+            <CoachSection
+              coach={r.coach_result}
+              evidenceUrls={r.coach_evidence_urls}
+              shareUrls={r.coach_share_urls}
+            />
+          ) : null}
+
           {detail.annotated_video_url ? (
             <video
               src={detail.annotated_video_url}
@@ -210,6 +220,134 @@ function breathLabel(r: AnalysisResultPayload): string {
   const rt = r.breath_count_right;
   if (l == null && rt == null) return "—";
   return `${l ?? 0}/${rt ?? 0}`;
+}
+
+const COACH_TONE: Record<string, string> = {
+  fix: "border-amber-200 bg-amber-50",
+  strength: "border-emerald-200 bg-emerald-50",
+  info: "border-slate-200 bg-slate-50",
+  unavailable: "border-slate-200 bg-slate-50",
+};
+const COACH_ORDER: Record<string, number> = { fix: 0, strength: 1, info: 2, unavailable: 3 };
+
+function CoachSection({
+  coach,
+  evidenceUrls,
+  shareUrls,
+}: {
+  coach: CoachResult;
+  evidenceUrls: Record<string, string> | null;
+  shareUrls: Record<string, string> | null;
+}) {
+  if (coach.refused) {
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+        <h2 className="text-lg font-semibold">Coach feedback</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          We couldn&apos;t coach this clip well — film side-on, at or just above
+          the waterline, with one swimmer clearly in frame.
+        </p>
+      </section>
+    );
+  }
+  const findings = coach.results
+    .flatMap((c) => c.findings)
+    .filter((f) => f.component !== "gate" && f.available)
+    .sort((a, b) => (COACH_ORDER[a.severity] ?? 9) - (COACH_ORDER[b.severity] ?? 9));
+  if (findings.length === 0) return null;
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-lg font-semibold">Coach feedback</h2>
+        <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+          beta
+        </span>
+      </div>
+      {coach.gate_tier === "borderline" ? (
+        <p className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          Your camera angle is borderline — film a truer side-on view for sharper
+          feedback.
+        </p>
+      ) : null}
+      <div className="space-y-2">
+        {findings.map((f, i) => (
+          <CoachFindingCard
+            key={`${f.component}-${i}`}
+            f={f}
+            evidenceUrls={evidenceUrls}
+            shareUrls={shareUrls}
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-slate-400">
+        Automated check, not a human coach. For personalized coaching, swim with
+        SwimBuddz Academy.
+      </p>
+    </section>
+  );
+}
+
+function CoachFindingCard({
+  f,
+  evidenceUrls,
+  shareUrls,
+}: {
+  f: CoachFinding;
+  evidenceUrls: Record<string, string> | null;
+  shareUrls: Record<string, string> | null;
+}) {
+  const tone = COACH_TONE[f.severity] ?? COACH_TONE.info;
+  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const why =
+    typeof f.extra?.why_it_matters === "string"
+      ? (f.extra.why_it_matters as string)
+      : null;
+  const ref = f.evidence_frames[0];
+  const t = ref?.timestamp_s;
+  const label = ref ? `${f.component}:${ref.index}` : null;
+  const thumb = ref && evidenceUrls ? evidenceUrls[label as string] : undefined;
+  const share = label && shareUrls ? shareUrls[label] : undefined;
+  return (
+    <div className={`rounded-xl border p-4 ${tone}`}>
+      <div className="flex items-start gap-3">
+        {thumb ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumb}
+            alt="Evidence frame from your clip"
+            className="h-20 w-28 shrink-0 rounded-lg border border-slate-200 object-cover"
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-medium">{f.observation}</p>
+            {t != null ? (
+              <span className="shrink-0 text-xs text-slate-400">
+                t={t.toFixed(1)}s
+              </span>
+            ) : null}
+          </div>
+          {why ? <p className="mt-1 text-sm text-slate-600">{why}</p> : null}
+          {drill ? (
+            <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
+              <span className="font-semibold">Drill: </span>
+              {drill}
+            </p>
+          ) : null}
+          {share ? (
+            <a
+              href={share}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-block text-sm font-semibold text-brand-600 hover:underline"
+            >
+              Share this card →
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Metric({
