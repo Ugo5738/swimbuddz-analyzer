@@ -207,6 +207,26 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
     ? (cycles.find((c) => c.subReads.some((s) => s.finding === steer))?.id ?? null)
     : null;
 
+  // "Start here" must always produce motion: open the cycle that holds the top
+  // fix, scroll its card into view, and briefly ring it — never a silent no-op.
+  const jumpToSteer = () => {
+    if (steerCycleId == null || !steer) return;
+    setOpenCycle(steerCycleId);
+    window.setTimeout(() => {
+      const el = document.querySelector(
+        `[data-subread="${steerCycleId}:${steer.area}"]`,
+      ) as HTMLElement | null;
+      (el ?? document.querySelector(`[data-cycle="${steerCycleId}"]`))?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      if (el) {
+        el.classList.add("ring-2", "ring-brand-500");
+        window.setTimeout(() => el.classList.remove("ring-2", "ring-brand-500"), 1600);
+      }
+    }, 80);
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -244,14 +264,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
         />
       ) : (
         <>
-          {steer ? (
-            <StartHerePointer
-              steer={steer}
-              onJump={() =>
-                steerCycleId != null ? setOpenCycle(steerCycleId) : undefined
-              }
-            />
-          ) : null}
+          {steer ? <StartHerePointer steer={steer} onJump={jumpToSteer} /> : null}
 
           {coach && cycles.length ? (
             <CycleSpine
@@ -388,7 +401,7 @@ function CycleSpine({
               </span>
               <span className="absolute inset-x-1.5 bottom-1 flex items-center justify-between text-[10px] font-medium text-white">
                 <span className="drop-shadow-sm">
-                  {c.coachedCount ? `${c.coachedCount} read${c.coachedCount > 1 ? "s" : ""}` : "tap to coach"}
+                  {c.coachedCount ? `${c.coachedCount} read${c.coachedCount > 1 ? "s" : ""}` : "no read yet"}
                 </span>
                 {c.coachedCount ? (
                   <Check size={11} strokeWidth={3} className="text-emerald-300" />
@@ -427,22 +440,30 @@ function CycleDetail({
   onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   return (
-    <div className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
+    <div
+      data-cycle={cycle.id}
+      className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3"
+    >
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
         Cycle at {fmtTime(cycle.t)} — what the camera can see
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         {cycle.subReads.map((sr) =>
           sr.finding ? (
-            <FindingCard
+            <div
               key={sr.aspect}
-              f={sr.finding}
-              label={sr.label}
-              evidenceUrls={evidenceUrls}
-              shareUrls={null}
-              clip={clip}
-              onEvidence={onEvidence}
-            />
+              data-subread={`${cycle.id}:${sr.aspect}`}
+              className="rounded-lg transition-shadow"
+            >
+              <FindingCard
+                f={sr.finding}
+                label={sr.label}
+                evidenceUrls={evidenceUrls}
+                shareUrls={null}
+                clip={clip}
+                onEvidence={onEvidence}
+              />
+            </div>
           ) : (
             <UncoachedSubRead key={sr.aspect} label={sr.label} />
           ),
@@ -456,9 +477,7 @@ function UncoachedSubRead({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-200 bg-white/60 p-3">
       <span className="text-sm font-medium text-slate-500">{label}</span>
-      <span className="ml-auto inline-flex items-center gap-1 text-xs text-slate-400">
-        <Sparkles size={12} /> tap to coach
-      </span>
+      <span className="ml-auto text-xs text-slate-500">not read in this cycle</span>
     </div>
   );
 }
