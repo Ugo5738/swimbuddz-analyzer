@@ -8,7 +8,6 @@ import {
   EyeOff,
   GraduationCap,
   Loader2,
-  Lock,
   PlayCircle,
   Share2,
   X,
@@ -22,6 +21,8 @@ import {
   failureMessage,
   fmtTime,
   getPublicAnalysis,
+  GUMROAD_CHECKOUT_BASE,
+  PRODUCTS,
   type PublicAnalysisJobDetail,
 } from "@/lib/publicAnalyzer";
 import {
@@ -199,6 +200,17 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   const verdict = coach
     ? buildVerdict(detail)
     : { fixes: [], strengths: [], notes: [] };
+  const topFix = verdict.fixes[0]?.observation ?? null;
+  // A poster so the heavy clip doesn't auto-download on metered data: reuse a
+  // frame we already have.
+  const poster = (() => {
+    for (const f of [...verdict.fixes, ...verdict.strengths]) {
+      const ref = f.evidence_frames[0];
+      const k = ref ? `${f.component}:${ref.index}` : null;
+      if (k && evidenceUrls?.[k]) return evidenceUrls[k];
+    }
+    return undefined;
+  })();
 
   return (
     <div className="space-y-6">
@@ -215,11 +227,9 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             feedback.
           </p>
         ) : null}
-        <ViewSelector
-          view={view}
-          setView={setView}
-          timelineUnlocked={detail.timeline_unlocked}
-        />
+        {detail.timeline_unlocked ? (
+          <ViewSelector view={view} setView={setView} />
+        ) : null}
       </div>
 
       {view === "timeline" && detail.timeline_unlocked ? (
@@ -255,6 +265,8 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             />
           ) : null}
 
+          <ShareRead topFix={topFix} />
+
           <CantSeeStrip />
 
           {cycles.length ? (
@@ -274,9 +286,13 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
               src={clip}
               controls
               playsInline
+              preload="none"
+              poster={poster}
               className="w-full rounded-2xl border border-slate-200 bg-black"
             />
           ) : null}
+
+          <BuyMore />
         </>
       ) : (
         <p className="text-slate-600">
@@ -655,7 +671,7 @@ function FindingCard({
           {sev.label}
         </span>
         {ref ? (
-          <span className="text-xs text-slate-400">t={ref.timestamp_s.toFixed(1)}s</span>
+          <span className="text-xs text-slate-600">t={ref.timestamp_s.toFixed(1)}s</span>
         ) : null}
       </div>
       <div className="flex items-start gap-3">
@@ -707,7 +723,7 @@ function FindingCard({
               </a>
             ) : null}
             {lowConf ? (
-              <span className="text-slate-400">low-confidence read</span>
+              <span className="text-slate-600">low-confidence read</span>
             ) : null}
           </div>
         </div>
@@ -719,40 +735,22 @@ function FindingCard({
 function ViewSelector({
   view,
   setView,
-  timelineUnlocked,
 }: {
   view: "coach" | "timeline";
   setView: (v: "coach" | "timeline") => void;
-  timelineUnlocked: boolean;
 }) {
   const tab = (active: boolean) =>
     active
       ? "rounded-md bg-white px-3 py-1 font-medium text-slate-800 shadow-sm"
       : "rounded-md px-3 py-1 text-slate-500";
   return (
-    <div className="mt-3 flex flex-col gap-1">
-      <div className="inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
-        <button type="button" onClick={() => setView("coach")} className={tab(view === "coach")}>
-          Coach&apos;s read
-        </button>
-        <button
-          type="button"
-          disabled={!timelineUnlocked}
-          onClick={() => timelineUnlocked && setView("timeline")}
-          className={
-            timelineUnlocked
-              ? tab(view === "timeline")
-              : "inline-flex items-center gap-1 rounded-md px-3 py-1 text-slate-400 disabled:cursor-not-allowed"
-          }
-        >
-          {!timelineUnlocked ? <Lock size={12} /> : null} Timeline
-        </button>
-      </div>
-      {!timelineUnlocked ? (
-        <p className="text-xs text-slate-400">
-          A video-led timeline view unlocks as our stroke detection sharpens.
-        </p>
-      ) : null}
+    <div className="mt-3 inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
+      <button type="button" onClick={() => setView("coach")} className={tab(view === "coach")}>
+        Coach&apos;s read
+      </button>
+      <button type="button" onClick={() => setView("timeline")} className={tab(view === "timeline")}>
+        Timeline
+      </button>
     </div>
   );
 }
@@ -817,6 +815,7 @@ function TimelineView({
           src={clip}
           controls
           playsInline
+          preload="none"
           className="w-full rounded-2xl bg-black"
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
           onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
@@ -956,7 +955,7 @@ function CantSeeStrip() {
         <span className="font-medium text-slate-600">
           Underwater — the camera can&apos;t see this
         </span>
-        <span className="ml-auto text-xs text-slate-400">every cycle</span>
+        <span className="ml-auto text-xs text-slate-500">every cycle</span>
       </div>
       <p className="text-sm text-slate-600">
         Your <span className="font-medium">catch &amp; pull</span> and your{" "}
@@ -996,6 +995,65 @@ function RefusalCard({ reason }: { reason: string | null }) {
       >
         Try another clip
       </Link>
+    </div>
+  );
+}
+
+function ShareRead({ topFix }: { topFix: string | null }) {
+  const onShare = async () => {
+    const url =
+      typeof window !== "undefined"
+        ? window.location.href
+        : "https://analyzer.swimbuddz.com";
+    const text = topFix
+      ? `I just got my freestyle stroke analysed by SwimBuddz Stroke Lab — my #1 fix: "${topFix}" Get your free stroke read:`
+      : "I just got my freestyle stroke analysed by SwimBuddz Stroke Lab. Get your free stroke read:";
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: "My Stroke Lab read", text, url });
+        return;
+      } catch {
+        /* user cancelled — fall through to WhatsApp */
+      }
+    }
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={onShare}
+      className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"
+    >
+      <Share2 size={16} /> Share my read
+    </button>
+  );
+}
+
+function BuyMore() {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <p className="font-semibold">Got another clip?</p>
+      <p className="mt-1 text-sm text-slate-600">
+        Analyse your next session — credit packs from $6.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {PRODUCTS.map((p) => (
+          <a
+            key={p.permalink}
+            href={`${GUMROAD_CHECKOUT_BASE}${p.permalink}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-800 hover:border-brand-300"
+          >
+            <span className="font-semibold">{p.label}</span> · {p.credits}{" "}
+            {p.credits > 1 ? "clips" : "clip"} · ${p.priceUsd}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }
