@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "SwimBuddz Stroke Lab — free AI freestyle analysis",
   description:
-    "Upload a freestyle clip and get an instant AI breakdown — stroke rate, body roll, breathing balance, and drills. Your first analysis is free.",
+    "Upload a freestyle clip and get an instant AI read of your technique — body line, recovery, breathing and entry — with drills to fix it. Your first analysis is free.",
   robots: { index: true, follow: true },
 };
 
@@ -25,7 +25,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <main className="flex-1">{children}</main>
           <footer className="mt-12 border-t border-slate-200 pt-6 text-xs text-slate-400">
             <p>
-              Freestyle analysis only. A measurement tool, not a coach. ·{" "}
+              Freestyle technique feedback — an automated coach&apos;s eye, not a
+              human coach. ·{" "}
               <a href="/privacy" className="underline hover:text-slate-600">
                 Privacy
               </a>{" "}

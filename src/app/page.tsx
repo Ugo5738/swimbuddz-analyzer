@@ -136,11 +136,12 @@ export default function Home() {
           Get an instant AI breakdown of your freestyle.
         </h1>
         <p className="mt-3 text-slate-600">
-          Upload a short, side-on clip. We measure your{" "}
-          <strong>stroke rate</strong>, <strong>body roll</strong>, and{" "}
-          <strong>breathing balance</strong>, flag what to work on, and suggest
-          drills. Your <strong>first analysis is free</strong> — we&apos;ll email
-          you the report when it&apos;s ready.
+          Upload a short, side-on clip. We read your technique like a coach —
+          your <strong>body line</strong>, <strong>recovery</strong>,{" "}
+          <strong>head &amp; breathing</strong> and <strong>entry</strong> — flag
+          what to work on, and suggest drills. Your{" "}
+          <strong>first analysis is free</strong> — we&apos;ll email you the
+          report when it&apos;s ready.
         </p>
       </section>
 
@@ -248,7 +249,7 @@ export default function Home() {
 
       <p className="mt-6 text-center text-xs text-slate-400">
         A coach charges $50+ for video analysis. This is an instant, automated
-        measurement tool — honest numbers, not a human coach.
+        coach&apos;s eye — honest, frame-by-frame feedback, not a human coach.
       </p>
     </div>
   );

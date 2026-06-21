@@ -17,12 +17,12 @@ export default function TermsPage() {
 
       <h2>What the service is</h2>
       <p>
-        Stroke Lab is an <strong>automated measurement tool</strong> for{" "}
-        <strong>freestyle</strong> swimming. It estimates metrics such as stroke
-        rate, body roll, and breathing balance from your video and suggests
-        drills. It is not coaching, and it is not medical or training advice.
-        Results are estimates and may be inaccurate, especially with poor camera
-        angles or low video quality.
+        Stroke Lab is an <strong>automated technique-feedback tool</strong> for{" "}
+        <strong>freestyle</strong> swimming. It gives a coach&apos;s-eye read of
+        what it can see from your video — body line, recovery, head &amp;
+        breathing, and entry — and suggests drills. It is not coaching, and it is
+        not medical or training advice. Results are automated estimates and may be
+        inaccurate, especially with poor camera angles or low video quality.
       </p>
 
       <h2>Credits and payment</h2>
