@@ -97,6 +97,7 @@ export type PublicAnalysisJobDetail = {
   job_id: string;
   status: AnalysisJobStatus;
   stroke_type: string;
+  discipline: Discipline;
   error_message: string | null;
   created_at: string;
   started_at: string | null;

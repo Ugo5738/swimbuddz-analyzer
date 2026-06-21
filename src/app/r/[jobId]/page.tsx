@@ -110,6 +110,12 @@ function ResultInner() {
   );
 }
 
+const DISCIPLINE_LABEL: Record<string, string> = {
+  sprint: "Sprint",
+  distance: "Distance",
+  general: "general technique",
+};
+
 function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   if (detail.status === "pending" || detail.status === "processing") {
     return (
@@ -147,7 +153,12 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   const r = detail.result;
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Your freestyle analysis</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-bold">Your freestyle analysis</h1>
+        <span className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700">
+          Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
+        </span>
+      </div>
 
       {r ? (
         <>
