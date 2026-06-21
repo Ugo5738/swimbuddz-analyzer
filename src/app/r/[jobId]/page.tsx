@@ -180,9 +180,9 @@ function ResultBody({
   token: string | null;
   jobId: string;
 }) {
-  // Evidence viewer (tap a frame → loop that moment in the clip). Hook must run
-  // before any early return.
+  // Hooks must run before any early return.
   const [viewer, setViewer] = useState<{ frame?: string; t: number } | null>(null);
+  const [view, setView] = useState<"coach" | "timeline">("coach");
   const onEvidence = (frame: string | undefined, t: number) => setViewer({ frame, t });
 
   if (detail.status === "pending" || detail.status === "processing") {
@@ -255,9 +255,22 @@ function ResultBody({
             feedback.
           </p>
         ) : null}
-        <ViewSelector timelineUnlocked={detail.timeline_unlocked} />
+        <ViewSelector
+          view={view}
+          setView={setView}
+          timelineUnlocked={detail.timeline_unlocked}
+        />
       </div>
 
+      {view === "timeline" && detail.timeline_unlocked ? (
+        <TimelineView
+          clip={clip}
+          findings={findings}
+          evidenceUrls={evidenceUrls}
+          onEvidence={onEvidence}
+        />
+      ) : (
+        <>
       {steer ? (
         <SteerCard
           f={steer}
@@ -314,6 +327,8 @@ function ResultBody({
           className="w-full rounded-2xl border border-slate-200 bg-black"
         />
       ) : null}
+        </>
+      )}
 
       <AcademyCTA />
 
@@ -469,17 +484,34 @@ function FindingCard({
   );
 }
 
-function ViewSelector({ timelineUnlocked }: { timelineUnlocked: boolean }) {
+function ViewSelector({
+  view,
+  setView,
+  timelineUnlocked,
+}: {
+  view: "coach" | "timeline";
+  setView: (v: "coach" | "timeline") => void;
+  timelineUnlocked: boolean;
+}) {
+  const tab = (active: boolean) =>
+    active
+      ? "rounded-md bg-white px-3 py-1 font-medium text-slate-800 shadow-sm"
+      : "rounded-md px-3 py-1 text-slate-500";
   return (
     <div className="mt-3 flex flex-col gap-1">
       <div className="inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
-        <span className="rounded-md bg-white px-3 py-1 font-medium text-slate-800 shadow-sm">
+        <button type="button" onClick={() => setView("coach")} className={tab(view === "coach")}>
           Coach&apos;s read
-        </span>
+        </button>
         <button
           type="button"
           disabled={!timelineUnlocked}
-          className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-slate-400 disabled:cursor-not-allowed"
+          onClick={() => timelineUnlocked && setView("timeline")}
+          className={
+            timelineUnlocked
+              ? tab(view === "timeline")
+              : "inline-flex items-center gap-1 rounded-md px-3 py-1 text-slate-400 disabled:cursor-not-allowed"
+          }
         >
           {!timelineUnlocked ? <Lock size={12} /> : null} Timeline
         </button>
@@ -489,6 +521,129 @@ function ViewSelector({ timelineUnlocked }: { timelineUnlocked: boolean }) {
           A video-led timeline view unlocks as our stroke detection sharpens.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const AREA_SHORT: Record<string, string> = {
+  body_line: "body line",
+  recovery_elbow: "elbow",
+  head_breath: "head",
+  entry_reach: "entry",
+};
+
+function TimelineView({
+  clip,
+  findings,
+  evidenceUrls,
+  onEvidence,
+}: {
+  clip: string | null;
+  findings: CoachFinding[];
+  evidenceUrls: Record<string, string> | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [current, setCurrent] = useState(0);
+
+  const moments = findings
+    .filter(
+      (f) =>
+        f.evidence_frames[0] &&
+        f.area !== "consistency" &&
+        (f.severity === "fix" || f.severity === "strength"),
+    )
+    .map((f) => ({ f, t: f.evidence_frames[0].timestamp_s }))
+    .sort((a, b) => a.t - b.t);
+
+  const span = duration || (moments.length ? moments[moments.length - 1].t + 1 : 1);
+  const active = [...moments].reverse().find((m) => m.t <= current + 0.3) ?? moments[0] ?? null;
+
+  const seek = (t: number) => {
+    setCurrent(t);
+    const v = videoRef.current;
+    if (v) {
+      v.currentTime = t;
+      void v.play?.()?.catch(() => {});
+    }
+  };
+
+  if (moments.length === 0) {
+    return (
+      <p className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+        No flagged moments to place on a timeline for this clip.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {clip ? (
+        <video
+          ref={videoRef}
+          src={clip}
+          controls
+          playsInline
+          className="w-full rounded-2xl bg-black"
+          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+          onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+        />
+      ) : (
+        <div className="flex aspect-video w-full items-center justify-center rounded-2xl bg-slate-100 text-sm text-slate-400">
+          Your clip plays here — upload a real clip to watch it sync.
+        </div>
+      )}
+
+      <div className="relative mx-2 mt-4 h-1.5 rounded-full bg-slate-100">
+        {moments.map((m, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => seek(m.t)}
+            aria-label={`Jump to ${m.t.toFixed(1)} seconds`}
+            style={{ left: `${(m.t / span) * 100}%` }}
+            className={`absolute -top-1.5 h-4 w-4 -translate-x-1/2 rounded-full border-2 border-white ${
+              m.f.severity === "fix" ? "bg-amber-400" : "bg-emerald-400"
+            } ${active === m ? "ring-2 ring-brand-400" : ""}`}
+          />
+        ))}
+        <div
+          style={{ left: `${Math.min(100, (current / span) * 100)}%` }}
+          className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 bg-slate-600"
+        />
+      </div>
+
+      {active ? (
+        <FindingCard
+          f={active.f}
+          evidenceUrls={evidenceUrls}
+          shareUrls={null}
+          clip={clip}
+          onEvidence={onEvidence}
+        />
+      ) : null}
+
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+        <span className="shrink-0 text-slate-400">Jump to:</span>
+        {moments.map((m, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => seek(m.t)}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+              active === m
+                ? "border-brand-400 bg-brand-50 text-brand-700"
+                : "border-slate-200 text-slate-600"
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${m.f.severity === "fix" ? "bg-amber-400" : "bg-emerald-400"}`}
+            />
+            {m.t.toFixed(0)}s {AREA_SHORT[m.f.area ?? ""] ?? ""}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -44,7 +44,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
   stroke_type: "freestyle",
   discipline: "sprint",
   drilldown_unlocked: true,
-  timeline_unlocked: false,
+  timeline_unlocked: true,
   error_message: null,
   created_at: STAMP,
   started_at: STAMP,
