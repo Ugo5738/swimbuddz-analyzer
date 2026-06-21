@@ -99,7 +99,10 @@ function ResultInner() {
   }, [poll]);
 
   return (
-    <div>
+    // Mobile stays in the shared max-w-3xl column; on desktop the result page
+    // breaks out wider (centred in the viewport, scrollbar-safe via 92vw) so the
+    // two-column read can use the screen instead of a skinny middle strip.
+    <div className="lg:relative lg:left-1/2 lg:w-[92vw] lg:max-w-6xl lg:-translate-x-1/2">
       <Link
         href="/"
         className="mb-6 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
@@ -240,60 +243,63 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           onEvidence={onEvidence}
         />
       ) : coach ? (
-        <>
-          {verdict.fixes.length ? (
-            <TopFixes
-              fixes={verdict.fixes}
-              evidenceUrls={evidenceUrls}
-              clip={clip}
-              onEvidence={onEvidence}
-            />
-          ) : (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-              Nothing major to fix in what we can see — your visible basics look
-              solid. Try another angle or session to go deeper.
-            </div>
-          )}
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
+          <div className="space-y-6">
+            {verdict.fixes.length ? (
+              <TopFixes
+                fixes={verdict.fixes}
+                evidenceUrls={evidenceUrls}
+                clip={clip}
+                onEvidence={onEvidence}
+              />
+            ) : (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                Nothing major to fix in what we can see — your visible basics look
+                solid. Try another angle or session to go deeper.
+              </div>
+            )}
 
-          {verdict.strengths.length || verdict.notes.length ? (
-            <WhatElse
-              strengths={verdict.strengths}
-              notes={verdict.notes}
-              evidenceUrls={evidenceUrls}
-              clip={clip}
-              onEvidence={onEvidence}
-            />
-          ) : null}
+            {verdict.strengths.length || verdict.notes.length ? (
+              <WhatElse
+                strengths={verdict.strengths}
+                notes={verdict.notes}
+                evidenceUrls={evidenceUrls}
+                clip={clip}
+                onEvidence={onEvidence}
+              />
+            ) : null}
 
-          <ShareRead topFix={topFix} />
+            <ShareRead topFix={topFix} />
 
-          <CantSeeStrip />
+            <CantSeeStrip />
 
-          {cycles.length ? (
-            <StrokeByStroke
-              cycles={cycles}
-              openId={openCycle}
-              setOpenId={setOpenCycle}
-              hedged={hedged}
-              evidenceUrls={evidenceUrls}
-              clip={clip}
-              onEvidence={onEvidence}
-            />
-          ) : null}
+            {cycles.length ? (
+              <StrokeByStroke
+                cycles={cycles}
+                openId={openCycle}
+                setOpenId={setOpenCycle}
+                hedged={hedged}
+                evidenceUrls={evidenceUrls}
+                clip={clip}
+                onEvidence={onEvidence}
+              />
+            ) : null}
+          </div>
 
-          {clip ? (
-            <video
-              src={clip}
-              controls
-              playsInline
-              preload="none"
-              poster={poster}
-              className="w-full rounded-2xl border border-slate-200 bg-black"
-            />
-          ) : null}
-
-          <BuyMore />
-        </>
+          <div className="mt-6 space-y-4 lg:mt-0 lg:sticky lg:top-6">
+            {clip ? (
+              <video
+                src={clip}
+                controls
+                playsInline
+                preload="none"
+                poster={poster}
+                className="w-full rounded-2xl border border-slate-200 bg-black"
+              />
+            ) : null}
+            <BuyMore />
+          </div>
+        </div>
       ) : (
         <p className="text-slate-600">
           We finished, but couldn&apos;t produce a coached read for this clip.
