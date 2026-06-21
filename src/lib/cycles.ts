@@ -115,10 +115,60 @@ export function cycleThumb(
   return undefined;
 }
 
-// Open the richest cycle by default so the page lands on a full read.
+// Open the richest cycle by default so the cycle lens lands on a full read.
 export function defaultOpenCycle(cycles: Cycle[]): number | null {
   if (!cycles.length) return null;
   let best = cycles[0];
   for (const c of cycles) if (c.coachedCount > best.coachedCount) best = c;
   return best.coachedCount > 0 ? best.id : null;
+}
+
+export const rankOf = (f: CoachFinding): number =>
+  typeof f.extra?.rank === 'number' ? (f.extra.rank as number) : 9;
+
+// Continuous (every-stroke) faults — stated ONCE as a stroke-wide habit, never
+// pinned to a single cycle. Recovery-elbow is the one aspect that genuinely
+// varies stroke to stroke, so its story is the across-strokes fatigue read
+// (area "consistency"), not a per-cycle fix.
+const CONTINUOUS = new Set(['body_line', 'head_breath', 'entry_reach']);
+
+export type Verdict = {
+  fixes: CoachFinding[]; // ranked top fixes — the page's spine
+  strengths: CoachFinding[]; // what's working
+  notes: CoachFinding[]; // info-level observations
+};
+
+// The coach's VERDICT: lead with ranked faults+fixes, not cycles. One finding per
+// aspect (continuous habits stated once); the elbow story comes in as the fatigue
+// read. Per-cycle recovery fixes stay in the stroke-by-stroke evidence lens.
+export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
+  const findings = (detail.result?.coach_result?.results ?? [])
+    .flatMap((c) => c.findings)
+    .filter((f) => f.component !== 'gate' && f.component !== 'collate');
+
+  const dedupeByArea = (list: CoachFinding[]): CoachFinding[] => {
+    const seen = new Set<string>();
+    const out: CoachFinding[] = [];
+    for (const f of list) {
+      const k = f.area ?? f.component;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(f);
+    }
+    return out;
+  };
+
+  const sorted = [...findings].sort((a, b) => rankOf(a) - rankOf(b));
+  const fixes = dedupeByArea(
+    sorted.filter(
+      (f) =>
+        f.severity === 'fix' &&
+        (CONTINUOUS.has(f.area ?? '') || f.area === 'consistency'),
+    ),
+  );
+  const strengths = dedupeByArea(sorted.filter((f) => f.severity === 'strength'));
+  const notes = dedupeByArea(
+    sorted.filter((f) => f.severity === 'info' && f.area !== 'consistency'),
+  );
+  return { fixes, strengths, notes };
 }

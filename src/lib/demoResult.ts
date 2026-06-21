@@ -125,7 +125,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               observation:
                 "Your recovery is cleaner early on — the elbow drops on your later strokes. That's fatigue creeping in; train holding the high-elbow shape when tired.",
               confidence: 0.5,
-              extra: { aggregate: true, trend: "declining" },
+              extra: { aggregate: true, trend: "declining", rank: 3 },
             }),
           ],
         },
@@ -143,6 +143,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               evidence_frames: [{ index: 9, timestamp_s: 2.6 }],
               extra: {
                 verdict: "hips_low",
+                rank: 2,
                 why_it_matters:
                   "Low hips drag — even in a sprint it costs you speed.",
                 drill: "Side-kick with a long lead arm, eyes down.",

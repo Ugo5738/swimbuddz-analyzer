@@ -4,14 +4,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  ChevronDown,
   EyeOff,
   GraduationCap,
-  Info,
   Loader2,
   Lock,
   PlayCircle,
   Share2,
-  Sparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -27,6 +26,7 @@ import {
 } from "@/lib/publicAnalyzer";
 import {
   buildCycles,
+  buildVerdict,
   type Cycle,
   cycleThumb,
   defaultOpenCycle,
@@ -193,39 +193,12 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   );
   const hedged = collate ? (collate.extra.recovery_count_hedged as number) : null;
   const evidenceUrls = r?.coach_evidence_urls ?? null;
-  const consistency = findings.find((f) => f.area === "consistency") ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
-  // The "start here" steer: the highest-priority fix across all aspects, surfaced
-  // as a pointer into the cycle that holds it (not a duplicated card).
-  const rankOf = (f: CoachFinding) =>
-    typeof f.extra?.rank === "number" ? (f.extra.rank as number) : 9;
-  const steer =
-    [...findings]
-      .filter((f) => f.severity === "fix" && f.area !== "consistency")
-      .sort((a, b) => rankOf(a) - rankOf(b))[0] ?? null;
-  const steerCycleId = steer
-    ? (cycles.find((c) => c.subReads.some((s) => s.finding === steer))?.id ?? null)
-    : null;
-
-  // "Start here" must always produce motion: open the cycle that holds the top
-  // fix, scroll its card into view, and briefly ring it — never a silent no-op.
-  const jumpToSteer = () => {
-    if (steerCycleId == null || !steer) return;
-    setOpenCycle(steerCycleId);
-    window.setTimeout(() => {
-      const el = document.querySelector(
-        `[data-subread="${steerCycleId}:${steer.area}"]`,
-      ) as HTMLElement | null;
-      (el ?? document.querySelector(`[data-cycle="${steerCycleId}"]`))?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-      if (el) {
-        el.classList.add("ring-2", "ring-brand-500");
-        window.setTimeout(() => el.classList.remove("ring-2", "ring-brand-500"), 1600);
-      }
-    }, 80);
-  };
+  // Fault-first: lead with the coach's ranked verdict, not the cycles. The cycle
+  // view is demoted to a "stroke by stroke" evidence lens below.
+  const verdict = coach
+    ? buildVerdict(detail)
+    : { fixes: [], strengths: [], notes: [] };
 
   return (
     <div className="space-y-6">
@@ -236,12 +209,6 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
           </span>
         </div>
-        {hedged != null ? (
-          <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-500">
-            <Info size={14} /> ~{hedged} {hedged === 1 ? "cycle" : "cycles"} seen ·
-            approximate
-          </p>
-        ) : null}
         {coach?.gate_tier === "borderline" ? (
           <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Your camera angle is borderline — film a truer side-on view for sharper
@@ -262,12 +229,36 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           evidenceUrls={evidenceUrls}
           onEvidence={onEvidence}
         />
-      ) : (
+      ) : coach ? (
         <>
-          {steer ? <StartHerePointer steer={steer} onJump={jumpToSteer} /> : null}
+          {verdict.fixes.length ? (
+            <TopFixes
+              fixes={verdict.fixes}
+              evidenceUrls={evidenceUrls}
+              clip={clip}
+              onEvidence={onEvidence}
+            />
+          ) : (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              Nothing major to fix in what we can see — your visible basics look
+              solid. Try another angle or session to go deeper.
+            </div>
+          )}
 
-          {coach && cycles.length ? (
-            <CycleSpine
+          {verdict.strengths.length || verdict.notes.length ? (
+            <WhatElse
+              strengths={verdict.strengths}
+              notes={verdict.notes}
+              evidenceUrls={evidenceUrls}
+              clip={clip}
+              onEvidence={onEvidence}
+            />
+          ) : null}
+
+          <CantSeeStrip />
+
+          {cycles.length ? (
+            <StrokeByStroke
               cycles={cycles}
               openId={openCycle}
               setOpenId={setOpenCycle}
@@ -276,20 +267,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
               clip={clip}
               onEvidence={onEvidence}
             />
-          ) : coach ? (
-            <p className="text-slate-600">
-              We coached your clip, but couldn&apos;t pick out distinct stroke
-              cycles — try a steadier, closer side-on angle.
-            </p>
-          ) : (
-            <p className="text-slate-600">
-              We finished, but couldn&apos;t produce a coached read for this clip.
-            </p>
-          )}
-
-          <CantSeeStrip />
-
-          {consistency ? <ConsistencyCard f={consistency} /> : null}
+          ) : null}
 
           {clip ? (
             <video
@@ -300,6 +278,10 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             />
           ) : null}
         </>
+      ) : (
+        <p className="text-slate-600">
+          We finished, but couldn&apos;t produce a coached read for this clip.
+        </p>
       )}
 
       <AcademyCTA />
@@ -316,28 +298,195 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   );
 }
 
-function StartHerePointer({
-  steer,
-  onJump,
+function TopFixes({
+  fixes,
+  evidenceUrls,
+  clip,
+  onEvidence,
 }: {
-  steer: CoachFinding;
-  onJump: () => void;
+  fixes: CoachFinding[];
+  evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onJump}
-      className="flex w-full items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-left transition hover:border-brand-300"
-    >
-      <Sparkles size={16} className="shrink-0 text-brand-600" />
-      <span className="min-w-0 text-sm">
-        <span className="font-semibold text-brand-700">Start here ▸ </span>
-        {steer.observation}
-      </span>
-      <span className="ml-auto shrink-0 text-xs font-medium text-brand-600">
-        open the cycle →
-      </span>
-    </button>
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="font-semibold">Your top fixes</p>
+      <p className="mb-3 text-sm text-slate-600">In priority order — start at #1.</p>
+      <div className="space-y-3">
+        {fixes.map((f, i) => (
+          <FixCard
+            key={f.area ?? i}
+            n={i + 1}
+            f={f}
+            evidenceUrls={evidenceUrls}
+            clip={clip}
+            onEvidence={onEvidence}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FixCard({
+  n,
+  f,
+  evidenceUrls,
+  clip,
+  onEvidence,
+}: {
+  n: number;
+  f: CoachFinding;
+  evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  const why =
+    typeof f.extra?.why_it_matters === "string"
+      ? (f.extra.why_it_matters as string)
+      : null;
+  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const ref = f.evidence_frames[0];
+  const key = ref ? `${f.component}:${ref.index}` : null;
+  const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
+  return (
+    <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-sm font-bold text-white">
+        {n}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold">{f.observation}</p>
+        {why ? <p className="mt-0.5 text-sm text-slate-600">{why}</p> : null}
+        <div className="mt-2 flex items-start gap-3">
+          {thumb ? (
+            <button
+              type="button"
+              onClick={() => ref && onEvidence(thumb, ref.timestamp_s)}
+              className="relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-amber-200"
+              aria-label="Watch this moment in your clip"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={thumb} alt="" className="h-full w-full object-cover" />
+              <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white opacity-0 transition hover:opacity-100">
+                <PlayCircle size={22} />
+              </span>
+            </button>
+          ) : null}
+          <div className="min-w-0 flex-1">
+            {drill ? (
+              <p className="rounded-lg bg-white/70 p-2 text-sm">
+                <span className="font-semibold">Drill: </span>
+                {drill}
+              </p>
+            ) : null}
+            {ref && clip ? (
+              <button
+                type="button"
+                onClick={() => onEvidence(thumb, ref.timestamp_s)}
+                className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
+              >
+                <PlayCircle size={14} /> Watch this moment
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WhatElse({
+  strengths,
+  notes,
+  evidenceUrls,
+  clip,
+  onEvidence,
+}: {
+  strengths: CoachFinding[];
+  notes: CoachFinding[];
+  evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  const row = (f: CoachFinding, tone: string, dot: string) => {
+    const ref = f.evidence_frames[0];
+    const key = ref ? `${f.component}:${ref.index}` : null;
+    const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
+    return (
+      <div
+        key={`${f.component}-${f.area}`}
+        className={`flex items-start gap-2 rounded-lg border p-3 ${tone}`}
+      >
+        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot}`} />
+        <div className="min-w-0">
+          <p className="text-sm">{f.observation}</p>
+          {ref && clip ? (
+            <button
+              type="button"
+              onClick={() => onEvidence(thumb, ref.timestamp_s)}
+              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline"
+            >
+              <PlayCircle size={12} /> Watch this moment
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="mb-2 font-semibold">What&apos;s working &amp; worth noting</p>
+      <div className="space-y-2">
+        {strengths.map((f) => row(f, "border-emerald-200 bg-emerald-50", "bg-emerald-500"))}
+        {notes.map((f) => row(f, "border-slate-200 bg-slate-50", "bg-slate-400"))}
+      </div>
+    </section>
+  );
+}
+
+function StrokeByStroke({
+  cycles,
+  openId,
+  setOpenId,
+  hedged,
+  evidenceUrls,
+  clip,
+  onEvidence,
+}: {
+  cycles: Cycle[];
+  openId: number | null;
+  setOpenId: (id: number | null) => void;
+  hedged: number | null;
+  evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline"
+      >
+        <ChevronDown size={16} className={`transition ${show ? "rotate-180" : ""}`} />
+        {show ? "Hide stroke-by-stroke evidence" : "See it stroke by stroke"}
+      </button>
+      {show ? (
+        <div className="mt-2">
+          <CycleSpine
+            cycles={cycles}
+            openId={openId}
+            setOpenId={setOpenId}
+            hedged={hedged}
+            evidenceUrls={evidenceUrls}
+            clip={clip}
+            onEvidence={onEvidence}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -836,23 +985,6 @@ function CantSeeStrip() {
       >
         <GraduationCap size={15} /> Get eyes underwater → SwimBuddz Academy
       </a>
-    </div>
-  );
-}
-
-function ConsistencyCard({ f }: { f: CoachFinding }) {
-  const sev = SEV[f.severity] ?? SEV.info;
-  return (
-    <div className={`rounded-xl border p-4 ${sev.tone}`}>
-      <div className="mb-1 flex items-center gap-2">
-        <span className="font-medium">Consistency across your cycles</span>
-        <span
-          className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}
-        >
-          {sev.label}
-        </span>
-      </div>
-      <p className="text-sm">{f.observation}</p>
     </div>
   );
 }
