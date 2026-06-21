@@ -220,6 +220,33 @@ export async function getPublicAnalysis(
   return (await resp.json()) as PublicAnalysisJobDetail;
 }
 
+export type InspectResponse = {
+  status: "ready" | "inspecting";
+  finding?: CoachFinding;
+};
+
+// Request an on-demand read of one recovery (the per-stroke drilldown). "ready"
+// means it was already coached (free); "inspecting" means a worker job was queued —
+// poll getPublicAnalysis until the finding appears in coach_result.
+export async function inspectPublicAnalysis(
+  jobId: string,
+  guestToken: string,
+  aspect: string,
+  instanceId: number,
+): Promise<InspectResponse> {
+  const resp = await fetch(
+    `${API_BASE_URL}/api/v1/ai/public/analyze/${jobId}/inspect?guest_token=${encodeURIComponent(guestToken)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aspect, instance_id: instanceId }),
+      cache: "no-store",
+    },
+  );
+  if (!resp.ok) throw await toError(resp);
+  return (await resp.json()) as InspectResponse;
+}
+
 export async function getCredits(email: string): Promise<PublicCredits> {
   const resp = await fetch(
     `${API_BASE_URL}/api/v1/ai/public/credits?email=${encodeURIComponent(email)}`,

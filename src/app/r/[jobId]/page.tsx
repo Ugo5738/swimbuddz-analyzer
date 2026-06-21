@@ -20,7 +20,9 @@ import {
   getPublicAnalysis,
   type PublicAnalysisJobDetail,
   type StrokeInstance,
+  inspectPublicAnalysis,
 } from "@/lib/publicAnalyzer";
+import { DEMO_DETAIL } from "@/lib/demoResult";
 
 const POLL_MS = 15_000;
 const ACTIVE = new Set(["pending", "processing"]);
@@ -56,6 +58,11 @@ function ResultInner() {
       : null);
 
   const poll = useCallback(async () => {
+    if (jobId === "demo") {
+      setDetail(DEMO_DETAIL); // no-backend preview of the redesign
+      setLoading(false);
+      return;
+    }
     if (!token) {
       setError("missing-token");
       setLoading(false);
@@ -108,7 +115,7 @@ function ResultInner() {
           </p>
         </Centered>
       ) : detail ? (
-        <ResultBody detail={detail} />
+        <ResultBody detail={detail} token={token} jobId={jobId} />
       ) : null}
     </div>
   );
@@ -161,7 +168,15 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
 };
 const SEV_ORDER: Record<string, number> = { fix: 0, strength: 1, info: 2 };
 
-function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
+function ResultBody({
+  detail,
+  token,
+  jobId,
+}: {
+  detail: PublicAnalysisJobDetail;
+  token: string | null;
+  jobId: string;
+}) {
   if (detail.status === "pending" || detail.status === "processing") {
     return (
       <Centered>
@@ -262,6 +277,9 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
         findings={byArea("recovery_elbow")}
         consistency={consistency}
         evidenceUrls={evidenceUrls}
+        jobId={jobId}
+        token={token}
+        canInspect={detail.drilldown_unlocked && jobId !== "demo" && !!token}
       />
 
       {clip ? (
@@ -434,6 +452,9 @@ function RecoveryBrowser({
   findings,
   consistency,
   evidenceUrls,
+  jobId,
+  token,
+  canInspect,
 }: {
   unlocked: boolean;
   recoveries: StrokeInstance[];
@@ -441,10 +462,58 @@ function RecoveryBrowser({
   findings: CoachFinding[];
   consistency: CoachFinding | null;
   evidenceUrls: Record<string, string> | null;
+  jobId: string;
+  token: string | null;
+  canInspect: boolean;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
-  const findingFor = (instanceId: number) =>
-    findings.find((f) => f.instance_id === instanceId) ?? null;
+  const [extra, setExtra] = useState<Record<number, CoachFinding>>({});
+  const [inspecting, setInspecting] = useState<number | null>(null);
+  const [inspectError, setInspectError] = useState("");
+
+  const findingFor = (id: number) =>
+    extra[id] ?? findings.find((f) => f.instance_id === id) ?? null;
+
+  const onTap = async (id: number) => {
+    if (selected === id) {
+      setSelected(null);
+      return;
+    }
+    setSelected(id);
+    setInspectError("");
+    if (findingFor(id) || !canInspect || !token || inspecting != null) return;
+
+    setInspecting(id);
+    try {
+      const res = await inspectPublicAnalysis(jobId, token, "recovery_elbow", id);
+      if (res.status === "ready" && res.finding) {
+        setExtra((e) => ({ ...e, [id]: res.finding as CoachFinding }));
+        setInspecting(null);
+        return;
+      }
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const d = await getPublicAnalysis(jobId, token);
+        const fs = (d.result?.coach_result?.results ?? []).flatMap(
+          (c) => c.findings,
+        );
+        const found = fs.find(
+          (f) => f.area === "recovery_elbow" && f.instance_id === id,
+        );
+        if (found) {
+          setExtra((e) => ({ ...e, [id]: found }));
+          setInspecting(null);
+          return;
+        }
+      }
+      setInspecting(null);
+      setInspectError("This is taking longer than expected — try again in a moment.");
+    } catch {
+      setInspecting(null);
+      setInspectError("We couldn't analyze that stroke — please try again.");
+    }
+  };
+
   const sel = selected != null ? findingFor(selected) : null;
 
   return (
@@ -481,13 +550,13 @@ function RecoveryBrowser({
           </p>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {recoveries.map((rec, i) => {
-              const has = findingFor(rec.instance_id);
               const isSel = selected === rec.instance_id;
+              const has = findingFor(rec.instance_id);
               return (
                 <button
                   key={rec.instance_id}
                   type="button"
-                  onClick={() => setSelected(isSel ? null : rec.instance_id)}
+                  onClick={() => void onTap(rec.instance_id)}
                   className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg border text-xs transition ${
                     isSel
                       ? "border-brand-500 bg-brand-50 text-brand-700"
@@ -505,12 +574,20 @@ function RecoveryBrowser({
           </div>
           {selected != null ? (
             <div className="mt-3">
-              {sel ? (
+              {inspecting === selected ? (
+                <p className="flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
+                  <Loader2 className="animate-spin" size={15} /> Analyzing this
+                  stroke…
+                </p>
+              ) : sel ? (
                 <FindingCard f={sel} evidenceUrls={evidenceUrls} shareUrls={null} />
+              ) : inspectError ? (
+                <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
+                  {inspectError}
+                </p>
               ) : (
                 <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
-                  We coached a sample of your recoveries — a deeper per-stroke inspect
-                  for this one is coming soon.
+                  We coached a sample of your recoveries — tap to analyze this one.
                 </p>
               )}
             </div>
