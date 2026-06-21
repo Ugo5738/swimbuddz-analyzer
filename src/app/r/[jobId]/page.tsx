@@ -510,10 +510,10 @@ function CycleSpine({
   const open = cycles.find((c) => c.id === openId) ?? null;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="font-semibold">Your stroke cycles</p>
-      <p className="mb-3 text-xs text-slate-400">
-        We saw ~{hedged ?? cycles.length} over-water cycles (approximate). Tap one to
-        open its reads.
+      <p className="font-semibold">Your recovery, stroke by stroke</p>
+      <p className="mb-3 text-xs text-slate-500">
+        ~{hedged ?? cycles.length} over-water recoveries (approximate) — the one
+        thing that changes stroke to stroke. Tap one to see its elbow read.
       </p>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -588,45 +588,31 @@ function CycleDetail({
   clip: string | null;
   onEvidence: (frame: string | undefined, t: number) => void;
 }) {
+  const reads = cycle.subReads.filter((s) => s.finding);
   return (
-    <div
-      data-cycle={cycle.id}
-      className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3"
-    >
+    <div className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
-        Cycle at {fmtTime(cycle.t)} — what the camera can see
+        Recovery at {fmtTime(cycle.t)}
       </p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {cycle.subReads.map((sr) =>
-          sr.finding ? (
-            <div
+      {reads.length ? (
+        <div className="space-y-2">
+          {reads.map((sr) => (
+            <FindingCard
               key={sr.aspect}
-              data-subread={`${cycle.id}:${sr.aspect}`}
-              className="rounded-lg transition-shadow"
-            >
-              <FindingCard
-                f={sr.finding}
-                label={sr.label}
-                evidenceUrls={evidenceUrls}
-                shareUrls={null}
-                clip={clip}
-                onEvidence={onEvidence}
-              />
-            </div>
-          ) : (
-            <UncoachedSubRead key={sr.aspect} label={sr.label} />
-          ),
-        )}
-      </div>
-    </div>
-  );
-}
-
-function UncoachedSubRead({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-200 bg-white/60 p-3">
-      <span className="text-sm font-medium text-slate-500">{label}</span>
-      <span className="ml-auto text-xs text-slate-500">not read in this cycle</span>
+              f={sr.finding as CoachFinding}
+              label={sr.label}
+              evidenceUrls={evidenceUrls}
+              shareUrls={null}
+              clip={clip}
+              onEvidence={onEvidence}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">
+          We couldn&apos;t read a clear recovery in this stroke.
+        </p>
+      )}
     </div>
   );
 }

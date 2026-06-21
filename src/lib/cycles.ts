@@ -31,9 +31,6 @@ export type Cycle = {
   coachedCount: number;
 };
 
-const frameTime = (f: CoachFinding): number | null =>
-  f.evidence_frames?.[0]?.timestamp_s ?? null;
-
 export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
   const r = detail.result;
   const recoveries = (r?.instances ?? [])
@@ -52,42 +49,20 @@ export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
     coachedCount: 0,
   }));
 
-  const findings = (r?.coach_result?.results ?? [])
-    .flatMap((c) => c.findings)
-    .filter(
-      (f) =>
-        f.component !== "gate" &&
-        f.component !== "collate" &&
-        f.area !== "consistency",
-    );
-
-  const nearestByTime = (t: number | null): number => {
-    if (t == null) return -1;
-    let best = 0;
-    let bd = Infinity;
-    cycles.forEach((c, i) => {
-      const d = Math.abs(c.t - t);
-      if (d < bd) {
-        bd = d;
-        best = i;
-      }
-    });
-    return best;
-  };
-
+  // Only recovery/elbow genuinely varies stroke to stroke, so it is the ONLY
+  // aspect that lives per-cycle (matched to its exact instance, never guessed).
+  // Continuous habits — head, body line, reach — are stated ONCE in the verdict
+  // and are never pinned to a single cycle; doing so via nearest-timestamp
+  // mis-taught an every-stroke habit as a one-stroke event.
+  const recoverySlot = ABOVE_WATER.findIndex((a) => a.key === "recovery_elbow");
+  const findings = (r?.coach_result?.results ?? []).flatMap((c) => c.findings);
   for (const f of findings) {
-    if (!f.area) continue;
-    const slot = ABOVE_WATER.findIndex((a) => a.key === f.area);
-    if (slot < 0) continue; // underwater / not a per-cycle aspect
-    // Recovery findings carry the exact instance; everything else lands on the
-    // nearest cycle by timestamp.
-    let ci = -1;
-    if (f.area === "recovery_elbow" && typeof f.instance_id === "number") {
-      ci = cycles.findIndex((c) => c.id === f.instance_id);
-    }
-    if (ci < 0) ci = nearestByTime(frameTime(f));
+    if (f.area !== "recovery_elbow" || typeof f.instance_id !== "number") continue;
+    const ci = cycles.findIndex((c) => c.id === f.instance_id);
     if (ci < 0) continue;
-    if (!cycles[ci].subReads[slot].finding) cycles[ci].subReads[slot].finding = f;
+    if (!cycles[ci].subReads[recoverySlot].finding) {
+      cycles[ci].subReads[recoverySlot].finding = f;
+    }
   }
 
   for (const c of cycles) {
