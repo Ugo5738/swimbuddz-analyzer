@@ -8,7 +8,10 @@ import {
   Info,
   Loader2,
   Lock,
+  PlayCircle,
   Share2,
+  Sparkles,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
@@ -177,6 +180,11 @@ function ResultBody({
   token: string | null;
   jobId: string;
 }) {
+  // Evidence viewer (tap a frame → loop that moment in the clip). Hook must run
+  // before any early return.
+  const [viewer, setViewer] = useState<{ frame?: string; t: number } | null>(null);
+  const onEvidence = (frame: string | undefined, t: number) => setViewer({ frame, t });
+
   if (detail.status === "pending" || detail.status === "processing") {
     return (
       <Centered>
@@ -218,6 +226,13 @@ function ResultBody({
   );
   const consistency = findings.find((f) => f.area === "consistency") ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
+  // The "start here" steer: the highest-priority fix across all aspects.
+  const rankOf = (f: CoachFinding) =>
+    typeof f.extra?.rank === "number" ? (f.extra.rank as number) : 9;
+  const steer =
+    [...findings]
+      .filter((f) => f.severity === "fix" && f.area !== "consistency")
+      .sort((a, b) => rankOf(a) - rankOf(b))[0] ?? null;
 
   return (
     <div className="space-y-6">
@@ -240,10 +255,17 @@ function ResultBody({
             feedback.
           </p>
         ) : null}
-        <p className="mt-2 text-xs text-slate-400">
-          An automated coach&apos;s eye — not a human coach.
-        </p>
+        <ViewSelector timelineUnlocked={detail.timeline_unlocked} />
       </div>
+
+      {steer ? (
+        <SteerCard
+          f={steer}
+          clip={clip}
+          evidenceUrls={evidenceUrls}
+          onEvidence={onEvidence}
+        />
+      ) : null}
 
       {coach ? (
         <div className="space-y-3">
@@ -258,6 +280,8 @@ function ResultBody({
               }
               evidenceUrls={evidenceUrls}
               shareUrls={shareUrls}
+              clip={clip}
+              onEvidence={onEvidence}
             />
           ))}
           {CANT_SEE.map((c) => (
@@ -292,6 +316,15 @@ function ResultBody({
       ) : null}
 
       <AcademyCTA />
+
+      {viewer ? (
+        <EvidenceViewer
+          frameUrl={viewer.frame}
+          timestamp={viewer.t}
+          clip={clip}
+          onClose={() => setViewer(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -301,11 +334,15 @@ function AreaSection({
   findings,
   evidenceUrls,
   shareUrls,
+  clip,
+  onEvidence,
 }: {
   label: string;
   findings: CoachFinding[];
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   if (findings.length === 0) {
     return (
@@ -331,6 +368,8 @@ function AreaSection({
             f={f}
             evidenceUrls={evidenceUrls}
             shareUrls={shareUrls}
+            clip={clip}
+            onEvidence={onEvidence}
           />
         ))}
       </div>
@@ -342,10 +381,14 @@ function FindingCard({
   f,
   evidenceUrls,
   shareUrls,
+  clip,
+  onEvidence,
 }: {
   f: CoachFinding;
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
+  clip?: string | null;
+  onEvidence?: (frame: string | undefined, t: number) => void;
 }) {
   const sev = SEV[f.severity] ?? SEV.info;
   const why =
@@ -370,12 +413,22 @@ function FindingCard({
       </div>
       <div className="flex items-start gap-3">
         {thumb ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={thumb}
-            alt="Evidence frame from your clip"
-            className="h-20 w-28 shrink-0 rounded-lg border border-slate-200 object-cover"
-          />
+          <button
+            type="button"
+            onClick={() => ref && onEvidence?.(thumb, ref.timestamp_s)}
+            className="relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-slate-200"
+            aria-label="View this moment in your clip"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb}
+              alt="Evidence frame from your clip"
+              className="h-full w-full object-cover"
+            />
+            <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white opacity-0 transition hover:opacity-100">
+              <PlayCircle size={22} />
+            </span>
+          </button>
         ) : null}
         <div className="min-w-0 flex-1">
           <p className="font-medium">{f.observation}</p>
@@ -386,7 +439,16 @@ function FindingCard({
               {drill}
             </p>
           ) : null}
-          <div className="mt-2 flex items-center gap-3 text-xs">
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+            {ref && clip && onEvidence ? (
+              <button
+                type="button"
+                onClick={() => onEvidence(thumb, ref.timestamp_s)}
+                className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"
+              >
+                <PlayCircle size={13} /> Watch this moment
+              </button>
+            ) : null}
             {share ? (
               <a
                 href={share}
@@ -402,6 +464,150 @@ function FindingCard({
             ) : null}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ViewSelector({ timelineUnlocked }: { timelineUnlocked: boolean }) {
+  return (
+    <div className="mt-3 flex flex-col gap-1">
+      <div className="inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
+        <span className="rounded-md bg-white px-3 py-1 font-medium text-slate-800 shadow-sm">
+          Coach&apos;s read
+        </span>
+        <button
+          type="button"
+          disabled={!timelineUnlocked}
+          className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-slate-400 disabled:cursor-not-allowed"
+        >
+          {!timelineUnlocked ? <Lock size={12} /> : null} Timeline
+        </button>
+      </div>
+      {!timelineUnlocked ? (
+        <p className="text-xs text-slate-400">
+          A video-led timeline view unlocks as our stroke detection sharpens.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function SteerCard({
+  f,
+  clip,
+  evidenceUrls,
+  onEvidence,
+}: {
+  f: CoachFinding;
+  clip: string | null;
+  evidenceUrls: Record<string, string> | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  const ref = f.evidence_frames[0];
+  const label = ref ? `${f.component}:${ref.index}` : null;
+  const thumb = ref && evidenceUrls ? evidenceUrls[label as string] : undefined;
+  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  return (
+    <div className="flex gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-4">
+      {thumb ? (
+        <button
+          type="button"
+          onClick={() => ref && onEvidence(thumb, ref.timestamp_s)}
+          className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-brand-200"
+          aria-label="View this moment in your clip"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={thumb} alt="" className="h-full w-full object-cover" />
+        </button>
+      ) : null}
+      <div className="min-w-0">
+        <p className="inline-flex items-center gap-1 text-xs font-medium text-brand-700">
+          <Sparkles size={13} /> Start here
+        </p>
+        <p className="mt-1 font-medium">{f.observation}</p>
+        {drill ? (
+          <p className="mt-1 text-sm text-slate-600">
+            <span className="font-semibold">Drill:</span> {drill}
+          </p>
+        ) : null}
+        {ref && clip ? (
+          <button
+            type="button"
+            onClick={() => onEvidence(thumb, ref.timestamp_s)}
+            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
+          >
+            <PlayCircle size={14} /> Watch this moment
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceViewer({
+  frameUrl,
+  timestamp,
+  clip,
+  onClose,
+}: {
+  frameUrl?: string;
+  timestamp: number;
+  clip: string | null;
+  onClose: () => void;
+}) {
+  const start = Math.max(0, timestamp - 0.4);
+  const end = timestamp + 0.8;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute -top-9 right-0 text-white"
+          aria-label="Close"
+        >
+          <X size={24} />
+        </button>
+        {clip ? (
+          <video
+            src={clip}
+            autoPlay
+            muted
+            playsInline
+            className="w-full rounded-xl bg-black"
+            onLoadedMetadata={(e) => {
+              e.currentTarget.currentTime = start;
+            }}
+            onTimeUpdate={(e) => {
+              if (e.currentTarget.currentTime >= end) {
+                e.currentTarget.currentTime = start;
+              }
+            }}
+          />
+        ) : frameUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={frameUrl}
+            alt="Evidence frame"
+            className="w-full rounded-xl bg-black"
+          />
+        ) : (
+          <div className="rounded-xl bg-slate-800 p-8 text-center text-sm text-slate-300">
+            No frame available for this moment.
+          </div>
+        )}
+        <p className="mt-2 text-center text-xs text-white/70">
+          {clip
+            ? `Looping ${timestamp.toFixed(1)}s in your clip`
+            : `Frame at ${timestamp.toFixed(1)}s`}
+        </p>
       </div>
     </div>
   );

@@ -110,6 +110,7 @@ export type PublicAnalysisJobDetail = {
   stroke_type: string;
   discipline: Discipline;
   drilldown_unlocked: boolean;
+  timeline_unlocked: boolean;
   error_message: string | null;
   created_at: string;
   started_at: string | null;

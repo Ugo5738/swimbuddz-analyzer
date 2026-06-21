@@ -44,6 +44,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
   stroke_type: "freestyle",
   discipline: "sprint",
   drilldown_unlocked: true,
+  timeline_unlocked: false,
   error_message: null,
   created_at: STAMP,
   started_at: STAMP,
@@ -153,6 +154,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               evidence_frames: [{ index: 11, timestamp_s: 3.0 }],
               extra: {
                 kind: "head",
+                rank: 1,
                 why_it_matters: "Lifting the head sinks the legs and adds drag.",
                 drill: "Breathe to the side, keep one goggle in the water.",
               },
