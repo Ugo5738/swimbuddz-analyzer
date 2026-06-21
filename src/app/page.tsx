@@ -7,6 +7,7 @@ import {
   ACCEPTED_VIDEO_MIME,
   ApiError,
   createPublicAnalysis,
+  type Discipline,
   GUMROAD_CHECKOUT_BASE,
   getCredits,
   MAX_DURATION_SECONDS,
@@ -15,6 +16,12 @@ import {
   readVideoDuration,
   redeemLicense,
 } from "@/lib/publicAnalyzer";
+
+const DISCIPLINES: { value: Discipline; label: string; hint: string }[] = [
+  { value: "general", label: "General", hint: "All-round clean technique" },
+  { value: "sprint", label: "Sprint", hint: "Short & fast — power, tempo" },
+  { value: "distance", label: "Distance", hint: "Efficient over many lengths" },
+];
 import { compressVideoForUpload } from "@/lib/videoCompress";
 
 type Phase = "idle" | "working" | "queued" | "paywall" | "error";
@@ -31,6 +38,7 @@ function storeToken(jobId: string, token: string) {
 
 export default function Home() {
   const [email, setEmail] = useState("");
+  const [discipline, setDiscipline] = useState<Discipline>("general");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [busyMsg, setBusyMsg] = useState("");
@@ -38,7 +46,7 @@ export default function Home() {
   const [job, setJob] = useState<PublicAnalysisJob | null>(null);
   const fileRef = useRef<File | null>(null);
 
-  const run = useCallback(async (file: File, emailValue: string) => {
+  const run = useCallback(async (file: File, emailValue: string, disc: Discipline) => {
     setPhase("working");
     setError("");
     try {
@@ -65,7 +73,7 @@ export default function Home() {
 
       setBusyMsg("Uploading…");
       setProgress(100);
-      const result = await createPublicAnalysis(compressed.file, emailValue);
+      const result = await createPublicAnalysis(compressed.file, emailValue, disc);
       storeToken(result.job_id, result.guest_token);
       setJob(result);
       setPhase("queued");
@@ -94,9 +102,9 @@ export default function Home() {
         return;
       }
       fileRef.current = file;
-      void run(file, emailValue);
+      void run(file, emailValue, discipline);
     },
-    [run],
+    [run, discipline],
   );
 
   const reset = useCallback(() => {
@@ -113,7 +121,7 @@ export default function Home() {
       <Paywall
         email={email}
         onReady={() => {
-          if (fileRef.current && email) void run(fileRef.current, email);
+          if (fileRef.current && email) void run(fileRef.current, email, discipline);
         }}
       />
     );
@@ -178,6 +186,36 @@ export default function Home() {
               For best results: film side-on with the swimmer in frame, 10–90
               seconds long. Large clips are compressed on your device first, so
               they upload fast.
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              What are you training for?
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {DISCIPLINES.map((d) => (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => setDiscipline(d.value)}
+                  aria-pressed={discipline === d.value}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                    discipline === d.value
+                      ? "border-brand-600 bg-brand-50 text-brand-700"
+                      : "border-slate-300 text-slate-600 hover:border-slate-400"
+                  }`}
+                >
+                  <span className="block font-medium">{d.label}</span>
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    {d.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-slate-400">
+              We tailor the feedback to your goal — sprinters and distance
+              swimmers get different priorities.
             </p>
           </div>
 

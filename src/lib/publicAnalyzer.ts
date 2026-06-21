@@ -7,6 +7,11 @@ import { API_BASE_URL } from "./config";
 // ─── Types ────────────────────────────────────────────────────────────
 export type AnalysisJobStatus = "pending" | "processing" | "completed" | "failed";
 
+// The swimmer's goal. Steers how the coach prioritises + frames feedback (a long
+// front-quad glide is efficiency for distance, a dead-spot for sprint), never what
+// it perceives. Mirrors DISCIPLINES in services/ai_service/pipeline/types.py.
+export type Discipline = "sprint" | "distance" | "general";
+
 export type DrillSuggestion = {
   key: string;
   title: string;
@@ -162,6 +167,7 @@ async function toError(resp: Response): Promise<ApiError> {
 export async function createPublicAnalysis(
   file: File,
   guestEmail: string,
+  discipline: Discipline = "general",
 ): Promise<PublicAnalysisJob> {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ApiError(
@@ -175,6 +181,7 @@ export async function createPublicAnalysis(
   fd.append("video", file);
   fd.append("guest_email", guestEmail);
   fd.append("stroke_type", "freestyle");
+  fd.append("discipline", discipline);
 
   const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/analyze`, {
     method: "POST",
