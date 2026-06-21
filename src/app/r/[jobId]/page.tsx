@@ -16,16 +16,21 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type CoachFinding,
   failureMessage,
+  fmtTime,
   getPublicAnalysis,
   type PublicAnalysisJobDetail,
-  type StrokeInstance,
-  inspectPublicAnalysis,
 } from "@/lib/publicAnalyzer";
+import {
+  buildCycles,
+  type Cycle,
+  cycleThumb,
+  defaultOpenCycle,
+} from "@/lib/cycles";
 import { DEMO_DETAIL } from "@/lib/demoResult";
 
 const POLL_MS = 15_000;
@@ -119,7 +124,7 @@ function ResultInner() {
           </p>
         </Centered>
       ) : detail ? (
-        <ResultBody detail={detail} token={token} jobId={jobId} />
+        <ResultBody detail={detail} />
       ) : null}
     </div>
   );
@@ -130,28 +135,6 @@ const DISCIPLINE_LABEL: Record<string, string> = {
   distance: "Distance",
   general: "general technique",
 };
-
-// Fixed scaffold — same order every render. Visible areas first, then the honest
-// underwater gaps (the Academy hook).
-const AREAS = [
-  { key: "body_line", label: "Body line" },
-  { key: "recovery_elbow", label: "Recovery & elbow" },
-  { key: "head_breath", label: "Head & breathing" },
-  { key: "entry_reach", label: "Entry & reach" },
-] as const;
-
-const CANT_SEE = [
-  {
-    key: "catch_pull",
-    label: "Catch & pull",
-    copy: "The catch and pull happen underwater — a coach in the pool can see what an above-water, side-on clip can't.",
-  },
-  {
-    key: "kick",
-    label: "Kick",
-    copy: "Your kick runs mostly underwater and between frames — it's best read by a coach in the pool.",
-  },
-] as const;
 
 const SEV: Record<string, { label: string; tone: string; pill: string }> = {
   fix: {
@@ -170,20 +153,15 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
     pill: "bg-slate-100 text-slate-600",
   },
 };
-const SEV_ORDER: Record<string, number> = { fix: 0, strength: 1, info: 2 };
 
-function ResultBody({
-  detail,
-  token,
-  jobId,
-}: {
-  detail: PublicAnalysisJobDetail;
-  token: string | null;
-  jobId: string;
-}) {
+function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   // Hooks must run before any early return.
   const [viewer, setViewer] = useState<{ frame?: string; t: number } | null>(null);
   const [view, setView] = useState<"coach" | "timeline">("coach");
+  const cycles = useMemo(() => buildCycles(detail), [detail]);
+  const [openCycle, setOpenCycle] = useState<number | null>(() =>
+    defaultOpenCycle(cycles),
+  );
   const onEvidence = (frame: string | undefined, t: number) => setViewer({ frame, t });
 
   if (detail.status === "pending" || detail.status === "processing") {
@@ -213,27 +191,21 @@ function ResultBody({
   const collate = findings.find(
     (f) => typeof f.extra?.recovery_count_hedged === "number",
   );
-  const hedged = collate
-    ? (collate.extra.recovery_count_hedged as number)
-    : null;
+  const hedged = collate ? (collate.extra.recovery_count_hedged as number) : null;
   const evidenceUrls = r?.coach_evidence_urls ?? null;
-  const shareUrls = r?.coach_share_urls ?? null;
-  const byArea = (key: string) =>
-    findings
-      .filter((f) => f.area === key && f.component !== "collate")
-      .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
-  const recoveries = (r?.instances ?? []).filter(
-    (i) => i.phase === "recovery" && i.arm === "near",
-  );
   const consistency = findings.find((f) => f.area === "consistency") ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
-  // The "start here" steer: the highest-priority fix across all aspects.
+  // The "start here" steer: the highest-priority fix across all aspects, surfaced
+  // as a pointer into the cycle that holds it (not a duplicated card).
   const rankOf = (f: CoachFinding) =>
     typeof f.extra?.rank === "number" ? (f.extra.rank as number) : 9;
   const steer =
     [...findings]
       .filter((f) => f.severity === "fix" && f.area !== "consistency")
       .sort((a, b) => rankOf(a) - rankOf(b))[0] ?? null;
+  const steerCycleId = steer
+    ? (cycles.find((c) => c.subReads.some((s) => s.finding === steer))?.id ?? null)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -246,8 +218,8 @@ function ResultBody({
         </div>
         {hedged != null ? (
           <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-500">
-            <Info size={14} /> ~{hedged} {hedged === 1 ? "recovery" : "recoveries"}{" "}
-            seen · approximate
+            <Info size={14} /> ~{hedged} {hedged === 1 ? "cycle" : "cycles"} seen ·
+            approximate
           </p>
         ) : null}
         {coach?.gate_tier === "borderline" ? (
@@ -272,64 +244,48 @@ function ResultBody({
         />
       ) : (
         <>
-      {steer ? (
-        <SteerCard
-          f={steer}
-          clip={clip}
-          evidenceUrls={evidenceUrls}
-          onEvidence={onEvidence}
-        />
-      ) : null}
-
-      {coach ? (
-        <div className="space-y-3">
-          {AREAS.map((a) => (
-            <AreaSection
-              key={a.key}
-              label={a.label}
-              findings={
-                a.key === "recovery_elbow"
-                  ? byArea(a.key).slice(0, 1)
-                  : byArea(a.key)
+          {steer ? (
+            <StartHerePointer
+              steer={steer}
+              onJump={() =>
+                steerCycleId != null ? setOpenCycle(steerCycleId) : undefined
               }
+            />
+          ) : null}
+
+          {coach && cycles.length ? (
+            <CycleSpine
+              cycles={cycles}
+              openId={openCycle}
+              setOpenId={setOpenCycle}
+              hedged={hedged}
               evidenceUrls={evidenceUrls}
-              shareUrls={shareUrls}
               clip={clip}
               onEvidence={onEvidence}
             />
-          ))}
-          {CANT_SEE.map((c) => (
-            <CantSeeCard key={c.key} label={c.label} copy={c.copy} />
-          ))}
-        </div>
-      ) : (
-        <p className="text-slate-600">
-          We finished, but couldn&apos;t produce a coached read for this clip.
-        </p>
-      )}
+          ) : coach ? (
+            <p className="text-slate-600">
+              We coached your clip, but couldn&apos;t pick out distinct stroke
+              cycles — try a steadier, closer side-on angle.
+            </p>
+          ) : (
+            <p className="text-slate-600">
+              We finished, but couldn&apos;t produce a coached read for this clip.
+            </p>
+          )}
 
-      <RecoveryBrowser
-        unlocked={detail.drilldown_unlocked}
-        recoveries={recoveries}
-        hedged={hedged}
-        findings={byArea("recovery_elbow")}
-        consistency={consistency}
-        evidenceUrls={evidenceUrls}
-        clip={clip}
-        onEvidence={onEvidence}
-        jobId={jobId}
-        token={token}
-        canInspect={detail.drilldown_unlocked && jobId !== "demo" && !!token}
-      />
+          <CantSeeStrip />
 
-      {clip ? (
-        <video
-          src={clip}
-          controls
-          playsInline
-          className="w-full rounded-2xl border border-slate-200 bg-black"
-        />
-      ) : null}
+          {consistency ? <ConsistencyCard f={consistency} /> : null}
+
+          {clip ? (
+            <video
+              src={clip}
+              controls
+              playsInline
+              className="w-full rounded-2xl border border-slate-200 bg-black"
+            />
+          ) : null}
         </>
       )}
 
@@ -347,62 +303,176 @@ function ResultBody({
   );
 }
 
-function AreaSection({
-  label,
-  findings,
+function StartHerePointer({
+  steer,
+  onJump,
+}: {
+  steer: CoachFinding;
+  onJump: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onJump}
+      className="flex w-full items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-left transition hover:border-brand-300"
+    >
+      <Sparkles size={16} className="shrink-0 text-brand-600" />
+      <span className="min-w-0 text-sm">
+        <span className="font-semibold text-brand-700">Start here ▸ </span>
+        {steer.observation}
+      </span>
+      <span className="ml-auto shrink-0 text-xs font-medium text-brand-600">
+        open the cycle →
+      </span>
+    </button>
+  );
+}
+
+function CycleSpine({
+  cycles,
+  openId,
+  setOpenId,
+  hedged,
   evidenceUrls,
-  shareUrls,
   clip,
   onEvidence,
 }: {
-  label: string;
-  findings: CoachFinding[];
+  cycles: Cycle[];
+  openId: number | null;
+  setOpenId: (id: number | null) => void;
+  hedged: number | null;
   evidenceUrls: Record<string, string> | null;
-  shareUrls: Record<string, string> | null;
   clip: string | null;
   onEvidence: (frame: string | undefined, t: number) => void;
 }) {
-  if (findings.length === 0) {
-    return (
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex items-center justify-between">
-          <span className="font-medium">{label}</span>
-          <span className="text-xs text-slate-400">No clear read</span>
-        </div>
-        <p className="mt-1 text-sm text-slate-500">
-          We couldn&apos;t get a clear read on this from your clip — try a steadier,
-          closer side-on angle.
-        </p>
-      </div>
-    );
-  }
+  const open = cycles.find((c) => c.id === openId) ?? null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <p className="mb-2 font-medium">{label}</p>
-      <div className="space-y-2">
-        {findings.map((f, i) => (
-          <FindingCard
-            key={`${f.component}-${f.instance_id ?? i}`}
-            f={f}
-            evidenceUrls={evidenceUrls}
-            shareUrls={shareUrls}
-            clip={clip}
-            onEvidence={onEvidence}
-          />
-        ))}
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="font-semibold">Your stroke cycles</p>
+      <p className="mb-3 text-xs text-slate-400">
+        We saw ~{hedged ?? cycles.length} over-water cycles (approximate). Tap one to
+        open its reads.
+      </p>
+
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {cycles.map((c) => {
+          const isOpen = openId === c.id;
+          const thumb = cycleThumb(c, evidenceUrls);
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setOpenId(isOpen ? null : c.id)}
+              aria-pressed={isOpen}
+              className={`relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border text-left transition ${
+                isOpen
+                  ? "border-brand-500 ring-2 ring-brand-300"
+                  : c.coachedCount
+                    ? "border-emerald-300 hover:border-brand-400"
+                    : "border-slate-200 hover:border-brand-300"
+              }`}
+            >
+              {thumb ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={thumb}
+                  alt={`Cycle at ${fmtTime(c.t)}`}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-b from-sky-100 to-sky-300" />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+              <span className="absolute left-1.5 top-1 text-[11px] font-semibold text-white drop-shadow-sm">
+                {fmtTime(c.t)}
+              </span>
+              <span className="absolute inset-x-1.5 bottom-1 flex items-center justify-between text-[10px] font-medium text-white">
+                <span className="drop-shadow-sm">
+                  {c.coachedCount ? `${c.coachedCount} read${c.coachedCount > 1 ? "s" : ""}` : "tap to coach"}
+                </span>
+                {c.coachedCount ? (
+                  <Check size={11} strokeWidth={3} className="text-emerald-300" />
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
+      {open ? (
+        <CycleDetail
+          cycle={open}
+          evidenceUrls={evidenceUrls}
+          clip={clip}
+          onEvidence={onEvidence}
+        />
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">
+          Tap a cycle above to see what the camera caught in it.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function CycleDetail({
+  cycle,
+  evidenceUrls,
+  clip,
+  onEvidence,
+}: {
+  cycle: Cycle;
+  evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
+        Cycle at {fmtTime(cycle.t)} — what the camera can see
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {cycle.subReads.map((sr) =>
+          sr.finding ? (
+            <FindingCard
+              key={sr.aspect}
+              f={sr.finding}
+              label={sr.label}
+              evidenceUrls={evidenceUrls}
+              shareUrls={null}
+              clip={clip}
+              onEvidence={onEvidence}
+            />
+          ) : (
+            <UncoachedSubRead key={sr.aspect} label={sr.label} />
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UncoachedSubRead({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-200 bg-white/60 p-3">
+      <span className="text-sm font-medium text-slate-500">{label}</span>
+      <span className="ml-auto inline-flex items-center gap-1 text-xs text-slate-400">
+        <Sparkles size={12} /> tap to coach
+      </span>
     </div>
   );
 }
 
 function FindingCard({
   f,
+  label,
   evidenceUrls,
   shareUrls,
   clip,
   onEvidence,
 }: {
   f: CoachFinding;
+  label?: string;
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
   clip?: string | null;
@@ -415,12 +485,17 @@ function FindingCard({
       : null;
   const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
   const ref = f.evidence_frames[0];
-  const label = ref ? `${f.component}:${ref.index}` : null;
-  const thumb = ref && evidenceUrls ? evidenceUrls[label as string] : undefined;
-  const share = label && shareUrls ? shareUrls[label] : undefined;
+  const key = ref ? `${f.component}:${ref.index}` : null;
+  const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
+  const share = key && shareUrls ? shareUrls[key] : undefined;
   const lowConf = f.confidence > 0 && f.confidence <= 0.5;
   return (
     <div className={`rounded-lg border p-3 ${sev.tone}`}>
+      {label ? (
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {label}
+        </p>
+      ) : null}
       <div className="mb-1 flex items-center gap-2">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}>
           {sev.label}
@@ -651,58 +726,6 @@ function TimelineView({
   );
 }
 
-function SteerCard({
-  f,
-  clip,
-  evidenceUrls,
-  onEvidence,
-}: {
-  f: CoachFinding;
-  clip: string | null;
-  evidenceUrls: Record<string, string> | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
-}) {
-  const ref = f.evidence_frames[0];
-  const label = ref ? `${f.component}:${ref.index}` : null;
-  const thumb = ref && evidenceUrls ? evidenceUrls[label as string] : undefined;
-  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
-  return (
-    <div className="flex gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-4">
-      {thumb ? (
-        <button
-          type="button"
-          onClick={() => ref && onEvidence(thumb, ref.timestamp_s)}
-          className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-brand-200"
-          aria-label="View this moment in your clip"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={thumb} alt="" className="h-full w-full object-cover" />
-        </button>
-      ) : null}
-      <div className="min-w-0">
-        <p className="inline-flex items-center gap-1 text-xs font-medium text-brand-700">
-          <Sparkles size={13} /> Start here
-        </p>
-        <p className="mt-1 font-medium">{f.observation}</p>
-        {drill ? (
-          <p className="mt-1 text-sm text-slate-600">
-            <span className="font-semibold">Drill:</span> {drill}
-          </p>
-        ) : null}
-        {ref && clip ? (
-          <button
-            type="button"
-            onClick={() => onEvidence(thumb, ref.timestamp_s)}
-            className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
-          >
-            <PlayCircle size={14} /> Watch this moment
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function EvidenceViewer({
   frameUrl,
   timestamp,
@@ -771,15 +794,21 @@ function EvidenceViewer({
   );
 }
 
-function CantSeeCard({ label, copy }: { label: string; copy: string }) {
+function CantSeeStrip() {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
       <div className="mb-1 flex items-center gap-2">
         <EyeOff size={18} className="text-slate-400" />
-        <span className="font-medium text-slate-600">{label}</span>
-        <span className="ml-auto text-xs text-slate-400">Can&apos;t see from this clip</span>
+        <span className="font-medium text-slate-600">
+          Underwater — the camera can&apos;t see this
+        </span>
+        <span className="ml-auto text-xs text-slate-400">every cycle</span>
       </div>
-      <p className="text-sm text-slate-600">{copy}</p>
+      <p className="text-sm text-slate-600">
+        Your <span className="font-medium">catch &amp; pull</span> and your{" "}
+        <span className="font-medium">kick</span> happen below the surface in every
+        stroke — a coach in the pool sees what an above-water, side-on clip can&apos;t.
+      </p>
       <a
         href="https://swimbuddz.com/academy"
         target="_blank"
@@ -795,9 +824,9 @@ function CantSeeCard({ label, copy }: { label: string; copy: string }) {
 function ConsistencyCard({ f }: { f: CoachFinding }) {
   const sev = SEV[f.severity] ?? SEV.info;
   return (
-    <div className={`mb-3 rounded-xl border p-4 ${sev.tone}`}>
+    <div className={`rounded-xl border p-4 ${sev.tone}`}>
       <div className="mb-1 flex items-center gap-2">
-        <span className="font-medium">Consistency across your swim</span>
+        <span className="font-medium">Consistency across your cycles</span>
         <span
           className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}
         >
@@ -806,199 +835,6 @@ function ConsistencyCard({ f }: { f: CoachFinding }) {
       </div>
       <p className="text-sm">{f.observation}</p>
     </div>
-  );
-}
-
-function RecoveryBrowser({
-  unlocked,
-  recoveries,
-  hedged,
-  findings,
-  consistency,
-  evidenceUrls,
-  clip,
-  onEvidence,
-  jobId,
-  token,
-  canInspect,
-}: {
-  unlocked: boolean;
-  recoveries: StrokeInstance[];
-  hedged: number | null;
-  findings: CoachFinding[];
-  consistency: CoachFinding | null;
-  evidenceUrls: Record<string, string> | null;
-  clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
-  jobId: string;
-  token: string | null;
-  canInspect: boolean;
-}) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const [extra, setExtra] = useState<Record<number, CoachFinding>>({});
-  const [inspecting, setInspecting] = useState<number | null>(null);
-  const [inspectError, setInspectError] = useState("");
-
-  const findingFor = (id: number) =>
-    extra[id] ?? findings.find((f) => f.instance_id === id) ?? null;
-
-  // Thumbnail for a recovery tile: its coached finding's evidence frame, if any.
-  const thumbFor = (id: number) => {
-    const fnd = findingFor(id);
-    const fr = fnd?.evidence_frames?.[0];
-    if (!fnd || !fr || !evidenceUrls) return undefined;
-    return evidenceUrls[`${fnd.component}:${fr.index}`];
-  };
-
-  const onTap = async (id: number) => {
-    if (selected === id) {
-      setSelected(null);
-      return;
-    }
-    setSelected(id);
-    setInspectError("");
-    if (findingFor(id) || !canInspect || !token || inspecting != null) return;
-
-    setInspecting(id);
-    try {
-      const res = await inspectPublicAnalysis(jobId, token, "recovery_elbow", id);
-      if (res.status === "ready" && res.finding) {
-        setExtra((e) => ({ ...e, [id]: res.finding as CoachFinding }));
-        setInspecting(null);
-        return;
-      }
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const d = await getPublicAnalysis(jobId, token);
-        const fs = (d.result?.coach_result?.results ?? []).flatMap(
-          (c) => c.findings,
-        );
-        const found = fs.find(
-          (f) => f.area === "recovery_elbow" && f.instance_id === id,
-        );
-        if (found) {
-          setExtra((e) => ({ ...e, [id]: found }));
-          setInspecting(null);
-          return;
-        }
-      }
-      setInspecting(null);
-      setInspectError("This is taking longer than expected — try again in a moment.");
-    } catch {
-      setInspecting(null);
-      setInspectError("We couldn't analyze that stroke — please try again.");
-    }
-  };
-
-  const sel = selected != null ? findingFor(selected) : null;
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      {consistency ? <ConsistencyCard f={consistency} /> : null}
-
-      <div className="mb-1 flex items-center gap-2">
-        <span className="font-semibold">Your strokes, one by one</span>
-        {!unlocked ? <Lock size={15} className="text-slate-400" /> : null}
-      </div>
-
-      {!unlocked ? (
-        <>
-          <div className="flex gap-2 overflow-hidden">
-            {Array.from({ length: Math.min(8, Math.max(4, hedged ?? 6)) }).map(
-              (_, i) => (
-                <div
-                  key={i}
-                  className="h-12 w-12 shrink-0 rounded-lg bg-slate-100 blur-[1px]"
-                />
-              ),
-            )}
-          </div>
-          <p className="mt-2 text-xs text-slate-400">
-            Per-stroke breakdown unlocks as our stroke detection sharpens — and the
-            number of strokes shown is approximate until it does.
-          </p>
-        </>
-      ) : (
-        <>
-          <p className="mb-3 text-xs text-slate-400">
-            We saw ~{recoveries.length} over-water recoveries (approximate). Tap one
-            to see its read.
-          </p>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {recoveries.map((rec, i) => {
-              const isSel = selected === rec.instance_id;
-              const has = findingFor(rec.instance_id);
-              const thumb = thumbFor(rec.instance_id);
-              return (
-                <button
-                  key={rec.instance_id}
-                  type="button"
-                  onClick={() => void onTap(rec.instance_id)}
-                  aria-pressed={isSel}
-                  className={`relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border text-left transition ${
-                    isSel
-                      ? "border-brand-500 ring-2 ring-brand-300"
-                      : has
-                        ? "border-emerald-300 hover:border-brand-400"
-                        : "border-slate-200 hover:border-brand-300"
-                  }`}
-                >
-                  {thumb ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={thumb}
-                      alt={`Recovery ${i + 1}`}
-                      className="absolute inset-0 h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 bg-gradient-to-b from-sky-100 to-sky-300" />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
-                  {has ? (
-                    <span className="absolute right-1 top-1 rounded-full bg-emerald-500 p-0.5 text-white shadow">
-                      <Check size={10} strokeWidth={3} />
-                    </span>
-                  ) : (
-                    <span className="absolute right-1 top-1 rounded-full bg-white/85 px-1.5 text-[10px] font-medium text-slate-500">
-                      tap
-                    </span>
-                  )}
-                  <span className="absolute bottom-1 left-1.5 text-[11px] font-semibold text-white drop-shadow-sm">
-                    #{i + 1} · {rec.peak_s.toFixed(1)}s
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {selected != null ? (
-            <div className="mt-3">
-              {inspecting === selected ? (
-                <p className="flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
-                  <Loader2 className="animate-spin" size={15} /> Analyzing this
-                  stroke…
-                </p>
-              ) : sel ? (
-                <FindingCard
-                  f={sel}
-                  evidenceUrls={evidenceUrls}
-                  shareUrls={null}
-                  clip={clip}
-                  onEvidence={onEvidence}
-                />
-              ) : inspectError ? (
-                <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
-                  {inspectError}
-                </p>
-              ) : (
-                <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
-                  We coached a sample of your recoveries — tap to analyze this one.
-                </p>
-              )}
-            </div>
-          ) : null}
-        </>
-      )}
-    </section>
   );
 }
 
