@@ -1,19 +1,25 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  EyeOff,
+  GraduationCap,
+  Info,
+  Loader2,
+  Lock,
+  Share2,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  type AnalysisResultPayload,
   type CoachFinding,
-  type CoachResult,
   failureMessage,
-  fmtTime,
   getPublicAnalysis,
-  type Observation,
   type PublicAnalysisJobDetail,
+  type StrokeInstance,
 } from "@/lib/publicAnalyzer";
 
 const POLL_MS = 15_000;
@@ -43,8 +49,6 @@ function ResultInner() {
   const [loading, setLoading] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Token: the in-session ?guest_token=, else localStorage from submit. (The
-  // emailed magic-link ?t= JWT is wired in a later phase.)
   const token =
     search.get("guest_token") ||
     (typeof window !== "undefined"
@@ -116,6 +120,47 @@ const DISCIPLINE_LABEL: Record<string, string> = {
   general: "general technique",
 };
 
+// Fixed scaffold — same order every render. Visible areas first, then the honest
+// underwater gaps (the Academy hook).
+const AREAS = [
+  { key: "body_line", label: "Body line" },
+  { key: "recovery_elbow", label: "Recovery & elbow" },
+  { key: "head_breath", label: "Head & breathing" },
+  { key: "entry_reach", label: "Entry & reach" },
+] as const;
+
+const CANT_SEE = [
+  {
+    key: "catch_pull",
+    label: "Catch & pull",
+    copy: "The catch and pull happen underwater — a coach in the pool can see what an above-water, side-on clip can't.",
+  },
+  {
+    key: "kick",
+    label: "Kick",
+    copy: "Your kick runs mostly underwater and between frames — it's best read by a coach in the pool.",
+  },
+] as const;
+
+const SEV: Record<string, { label: string; tone: string; pill: string }> = {
+  fix: {
+    label: "Work on this",
+    tone: "border-amber-200 bg-amber-50",
+    pill: "bg-amber-100 text-amber-800",
+  },
+  strength: {
+    label: "Strength",
+    tone: "border-emerald-200 bg-emerald-50",
+    pill: "bg-emerald-100 text-emerald-800",
+  },
+  info: {
+    label: "Note",
+    tone: "border-slate-200 bg-slate-50",
+    pill: "bg-slate-100 text-slate-600",
+  },
+};
+const SEV_ORDER: Record<string, number> = { fix: 0, strength: 1, info: 2 };
+
 function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   if (detail.status === "pending" || detail.status === "processing") {
     return (
@@ -125,180 +170,151 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           {detail.status === "pending" ? "Queued" : "Analyzing your stroke…"}
         </p>
         <p className="mt-1 text-sm text-slate-500">
-          We&apos;ll email you when it&apos;s ready — or leave this open and
-          it&apos;ll refresh itself.
+          We&apos;ll email you when it&apos;s ready.
         </p>
       </Centered>
     );
   }
 
-  if (detail.status === "failed") {
-    return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
-        <AlertTriangle className="mx-auto mb-3 text-amber-500" size={32} />
-        <h2 className="text-lg font-bold">We couldn&apos;t analyze this one</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          {failureMessage(detail.error_message)}
-        </p>
-        <Link
-          href="/"
-          className="mt-4 inline-block rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
-        >
-          Try another clip
-        </Link>
-      </div>
-    );
+  const r = detail.result;
+  const coach = r?.coach_result ?? null;
+
+  if (detail.status === "failed" || coach?.refused) {
+    return <RefusalCard reason={detail.error_message} />;
   }
 
-  const r = detail.result;
+  const findings = coach
+    ? coach.results.flatMap((c) => c.findings).filter((f) => f.component !== "gate")
+    : [];
+  const collate = findings.find(
+    (f) => typeof f.extra?.recovery_count_hedged === "number",
+  );
+  const hedged = collate
+    ? (collate.extra.recovery_count_hedged as number)
+    : null;
+  const evidenceUrls = r?.coach_evidence_urls ?? null;
+  const shareUrls = r?.coach_share_urls ?? null;
+  const byArea = (key: string) =>
+    findings
+      .filter((f) => f.area === key && f.component !== "collate")
+      .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
+  const recoveries = (r?.instances ?? []).filter(
+    (i) => i.phase === "recovery" && i.arm === "near",
+  );
+  const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold">Your freestyle analysis</h1>
-        <span className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700">
-          Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
-        </span>
+      <div>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold">Your freestyle read</h1>
+          <span className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700">
+            Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
+          </span>
+        </div>
+        {hedged != null ? (
+          <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-500">
+            <Info size={14} /> ~{hedged} {hedged === 1 ? "recovery" : "recoveries"}{" "}
+            seen · approximate
+          </p>
+        ) : null}
+        {coach?.gate_tier === "borderline" ? (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            Your camera angle is borderline — film a truer side-on view for sharper
+            feedback.
+          </p>
+        ) : null}
+        <p className="mt-2 text-xs text-slate-400">
+          An automated coach&apos;s eye — not a human coach.
+        </p>
       </div>
 
-      {r ? (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Metric
-              label="Stroke rate"
-              value={r.stroke_rate_spm != null ? r.stroke_rate_spm.toFixed(0) : "—"}
-              unit="spm"
+      {coach ? (
+        <div className="space-y-3">
+          {AREAS.map((a) => (
+            <AreaSection
+              key={a.key}
+              label={a.label}
+              findings={byArea(a.key)}
+              evidenceUrls={evidenceUrls}
+              shareUrls={shareUrls}
             />
-            <Metric
-              label="Body roll"
-              value={
-                r.body_roll_proxy_degrees != null
-                  ? r.body_roll_proxy_degrees.toFixed(0)
-                  : "—"
-              }
-              unit="°"
-            />
-            <Metric label="Breathing" value={breathLabel(r)} unit="" />
-            <Metric
-              label="Tracking"
-              value={`${Math.round(r.pose_detection_rate * 100)}`}
-              unit="%"
-            />
-          </div>
-
-          {r.summary_text ? (
-            <p className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 shadow-sm">
-              {r.summary_text}
-            </p>
-          ) : null}
-
-          {r.coach_result ? (
-            <CoachSection
-              coach={r.coach_result}
-              evidenceUrls={r.coach_evidence_urls}
-              shareUrls={r.coach_share_urls}
-            />
-          ) : null}
-
-          {detail.annotated_video_url ? (
-            <video
-              src={detail.annotated_video_url}
-              controls
-              playsInline
-              className="w-full rounded-2xl border border-slate-200 bg-black"
-            />
-          ) : null}
-
-          {r.observations.length > 0 ? (
-            <section>
-              <h2 className="mb-2 text-lg font-semibold">What we noticed</h2>
-              <div className="space-y-2">
-                {r.observations.map((o) => (
-                  <ObservationRow key={o.key} o={o} />
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </>
+          ))}
+          {CANT_SEE.map((c) => (
+            <CantSeeCard key={c.key} label={c.label} copy={c.copy} />
+          ))}
+        </div>
       ) : (
-        <p className="text-slate-600">Your report is ready but has no metrics.</p>
+        <p className="text-slate-600">
+          We finished, but couldn&apos;t produce a coached read for this clip.
+        </p>
       )}
+
+      <RecoveryBrowser
+        unlocked={detail.drilldown_unlocked}
+        recoveries={recoveries}
+        hedged={hedged}
+        findings={byArea("recovery_elbow")}
+        evidenceUrls={evidenceUrls}
+      />
+
+      {clip ? (
+        <video
+          src={clip}
+          controls
+          playsInline
+          className="w-full rounded-2xl border border-slate-200 bg-black"
+        />
+      ) : null}
+
+      <AcademyCTA />
     </div>
   );
 }
 
-function breathLabel(r: AnalysisResultPayload): string {
-  const l = r.breath_count_left;
-  const rt = r.breath_count_right;
-  if (l == null && rt == null) return "—";
-  return `${l ?? 0}/${rt ?? 0}`;
-}
-
-const COACH_TONE: Record<string, string> = {
-  fix: "border-amber-200 bg-amber-50",
-  strength: "border-emerald-200 bg-emerald-50",
-  info: "border-slate-200 bg-slate-50",
-  unavailable: "border-slate-200 bg-slate-50",
-};
-const COACH_ORDER: Record<string, number> = { fix: 0, strength: 1, info: 2, unavailable: 3 };
-
-function CoachSection({
-  coach,
+function AreaSection({
+  label,
+  findings,
   evidenceUrls,
   shareUrls,
 }: {
-  coach: CoachResult;
+  label: string;
+  findings: CoachFinding[];
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
 }) {
-  if (coach.refused) {
+  if (findings.length === 0) {
     return (
-      <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-        <h2 className="text-lg font-semibold">Coach feedback</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          We couldn&apos;t coach this clip well — film side-on, at or just above
-          the waterline, with one swimmer clearly in frame.
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">{label}</span>
+          <span className="text-xs text-slate-400">No clear read</span>
+        </div>
+        <p className="mt-1 text-sm text-slate-500">
+          We couldn&apos;t get a clear read on this from your clip — try a steadier,
+          closer side-on angle.
         </p>
-      </section>
+      </div>
     );
   }
-  const findings = coach.results
-    .flatMap((c) => c.findings)
-    .filter((f) => f.component !== "gate" && f.available)
-    .sort((a, b) => (COACH_ORDER[a.severity] ?? 9) - (COACH_ORDER[b.severity] ?? 9));
-  if (findings.length === 0) return null;
   return (
-    <section>
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-lg font-semibold">Coach feedback</h2>
-        <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-          beta
-        </span>
-      </div>
-      {coach.gate_tier === "borderline" ? (
-        <p className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Your camera angle is borderline — film a truer side-on view for sharper
-          feedback.
-        </p>
-      ) : null}
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="mb-2 font-medium">{label}</p>
       <div className="space-y-2">
         {findings.map((f, i) => (
-          <CoachFindingCard
-            key={`${f.component}-${i}`}
+          <FindingCard
+            key={`${f.component}-${f.instance_id ?? i}`}
             f={f}
             evidenceUrls={evidenceUrls}
             shareUrls={shareUrls}
           />
         ))}
       </div>
-      <p className="mt-3 text-xs text-slate-400">
-        Automated check, not a human coach. For personalized coaching, swim with
-        SwimBuddz Academy.
-      </p>
-    </section>
+    </div>
   );
 }
 
-function CoachFindingCard({
+function FindingCard({
   f,
   evidenceUrls,
   shareUrls,
@@ -307,19 +323,27 @@ function CoachFindingCard({
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
 }) {
-  const tone = COACH_TONE[f.severity] ?? COACH_TONE.info;
-  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const sev = SEV[f.severity] ?? SEV.info;
   const why =
     typeof f.extra?.why_it_matters === "string"
       ? (f.extra.why_it_matters as string)
       : null;
+  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
   const ref = f.evidence_frames[0];
-  const t = ref?.timestamp_s;
   const label = ref ? `${f.component}:${ref.index}` : null;
   const thumb = ref && evidenceUrls ? evidenceUrls[label as string] : undefined;
   const share = label && shareUrls ? shareUrls[label] : undefined;
+  const lowConf = f.confidence > 0 && f.confidence <= 0.5;
   return (
-    <div className={`rounded-xl border p-4 ${tone}`}>
+    <div className={`rounded-lg border p-3 ${sev.tone}`}>
+      <div className="mb-1 flex items-center gap-2">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}>
+          {sev.label}
+        </span>
+        {ref ? (
+          <span className="text-xs text-slate-400">t={ref.timestamp_s.toFixed(1)}s</span>
+        ) : null}
+      </div>
       <div className="flex items-start gap-3">
         {thumb ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -330,14 +354,7 @@ function CoachFindingCard({
           />
         ) : null}
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <p className="font-medium">{f.observation}</p>
-            {t != null ? (
-              <span className="shrink-0 text-xs text-slate-400">
-                t={t.toFixed(1)}s
-              </span>
-            ) : null}
-          </div>
+          <p className="font-medium">{f.observation}</p>
           {why ? <p className="mt-1 text-sm text-slate-600">{why}</p> : null}
           {drill ? (
             <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
@@ -345,66 +362,182 @@ function CoachFindingCard({
               {drill}
             </p>
           ) : null}
-          {share ? (
-            <a
-              href={share}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 inline-block text-sm font-semibold text-brand-600 hover:underline"
-            >
-              Share this card →
-            </a>
-          ) : null}
+          <div className="mt-2 flex items-center gap-3 text-xs">
+            {share ? (
+              <a
+                href={share}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"
+              >
+                <Share2 size={13} /> Share this card
+              </a>
+            ) : null}
+            {lowConf ? (
+              <span className="text-slate-400">low-confidence read</span>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function Metric({
-  label,
-  value,
-  unit,
-}: {
-  label: string;
-  value: string;
-  unit: string;
-}) {
+function CantSeeCard({ label, copy }: { label: string; copy: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
-        {label}
+    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <EyeOff size={18} className="text-slate-400" />
+        <span className="font-medium text-slate-600">{label}</span>
+        <span className="ml-auto text-xs text-slate-400">Can&apos;t see from this clip</span>
       </div>
-      <div className="mt-1 text-2xl font-bold">
-        {value}
-        <span className="ml-1 text-sm font-normal text-slate-400">{unit}</span>
-      </div>
+      <p className="text-sm text-slate-600">{copy}</p>
+      <a
+        href="https://swimbuddz.com/academy"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
+      >
+        <GraduationCap size={15} /> Get eyes underwater → SwimBuddz Academy
+      </a>
     </div>
   );
 }
 
-const TONE: Record<Observation["severity"], string> = {
-  good: "border-emerald-200 bg-emerald-50",
-  suggestion: "border-amber-200 bg-amber-50",
-  unavailable: "border-slate-200 bg-slate-50",
-};
+function RecoveryBrowser({
+  unlocked,
+  recoveries,
+  hedged,
+  findings,
+  evidenceUrls,
+}: {
+  unlocked: boolean;
+  recoveries: StrokeInstance[];
+  hedged: number | null;
+  findings: CoachFinding[];
+  evidenceUrls: Record<string, string> | null;
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  if (!unlocked) {
+    const n = hedged ?? 6;
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <span className="font-semibold">Your strokes, one by one</span>
+          <Lock size={15} className="text-slate-400" />
+        </div>
+        <div className="flex gap-2 overflow-hidden">
+          {Array.from({ length: Math.min(8, Math.max(4, n)) }).map((_, i) => (
+            <div
+              key={i}
+              className="h-12 w-12 shrink-0 rounded-lg bg-slate-100 blur-[1px]"
+            />
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-slate-400">
+          Per-stroke breakdown unlocks as our stroke detection sharpens — and the
+          number of strokes shown is approximate until it does.
+        </p>
+      </section>
+    );
+  }
 
-function ObservationRow({ o }: { o: Observation }) {
+  const findingFor = (instanceId: number) =>
+    findings.find((f) => f.instance_id === instanceId) ?? null;
+  const sel = selected != null ? findingFor(selected) : null;
+
   return (
-    <div className={`rounded-xl border p-4 ${TONE[o.severity]}`}>
-      <div className="flex items-center justify-between">
-        <span className="font-semibold">{o.title}</span>
-        {o.timestamp_s != null ? (
-          <span className="text-xs text-slate-400">@ {fmtTime(o.timestamp_s)}</span>
-        ) : null}
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="mb-1 font-semibold">Your strokes, one by one</p>
+      <p className="mb-3 text-xs text-slate-400">
+        We saw ~{recoveries.length} over-water recoveries (approximate). Tap one to
+        see its read.
+      </p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {recoveries.map((rec, i) => {
+          const has = findingFor(rec.instance_id);
+          const isSel = selected === rec.instance_id;
+          return (
+            <button
+              key={rec.instance_id}
+              type="button"
+              onClick={() => setSelected(isSel ? null : rec.instance_id)}
+              className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg border text-xs transition ${
+                isSel
+                  ? "border-brand-500 bg-brand-50 text-brand-700"
+                  : has
+                    ? "border-slate-300 hover:border-brand-400"
+                    : "border-slate-200 text-slate-400"
+              }`}
+              aria-pressed={isSel}
+            >
+              <span className="font-semibold">#{i + 1}</span>
+              <span>{rec.peak_s.toFixed(1)}s</span>
+            </button>
+          );
+        })}
       </div>
-      <p className="mt-1 text-sm text-slate-600">{o.detail}</p>
-      {o.drill ? (
-        <div className="mt-2 rounded-lg bg-white/70 p-3 text-sm">
-          <div className="font-medium">Drill: {o.drill.title}</div>
-          <p className="text-slate-600">{o.drill.how}</p>
+      {selected != null ? (
+        <div className="mt-3">
+          {sel ? (
+            <FindingCard f={sel} evidenceUrls={evidenceUrls} shareUrls={null} />
+          ) : (
+            <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
+              We coached a sample of your recoveries — a deeper per-stroke inspect
+              for this one is coming soon.
+            </p>
+          )}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function RefusalCard({ reason }: { reason: string | null }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+      <h2 className="text-lg font-bold">
+        We couldn&apos;t coach this clip well — and we won&apos;t guess.
+      </h2>
+      <p className="mt-2 text-sm text-slate-600">{failureMessage(reason)}</p>
+      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+        <p className="mb-1 font-medium">How to film a clip we can read:</p>
+        <ul className="list-disc space-y-1 pl-5 text-slate-600">
+          <li>Side-on, level with the swimmer</li>
+          <li>Camera at or just above the waterline</li>
+          <li>One swimmer clearly in frame</li>
+        </ul>
+      </div>
+      <Link
+        href="/"
+        className="mt-4 inline-block rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700"
+      >
+        Try another clip
+      </Link>
+    </div>
+  );
+}
+
+function AcademyCTA() {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-brand-100 bg-brand-50 p-5">
+      <GraduationCap size={28} className="shrink-0 text-brand-600" />
+      <p className="text-sm text-brand-800">
+        <span className="font-semibold">
+          This is an automated check, not a human coach.
+        </span>{" "}
+        For eyes-on, personalised coaching — including the bits the camera
+        can&apos;t see — come swim with{" "}
+        <a
+          href="https://swimbuddz.com/academy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-semibold underline"
+        >
+          SwimBuddz Academy
+        </a>
+        .
+      </p>
     </div>
   );
 }

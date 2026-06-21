@@ -63,19 +63,30 @@ export type CoachResult = {
   meta: Record<string, unknown>;
 };
 
+// One segmented phase instance (a recovery / entry / glide / breath chunk). The
+// backend exposes a whitelisted projection only when the per-stroke drilldown is
+// unlocked; null otherwise. Powers the recovery browser.
+export type StrokeInstance = {
+  instance_id: number;
+  phase: string; // recovery | entry | glide | breath
+  arm: string; // near | far | none
+  start_s: number;
+  end_s: number;
+  peak_s: number;
+  confidence: number;
+};
+
 export type AnalysisResultPayload = {
   detected_stroke: string;
   pose_detection_rate: number;
   frames_total: number;
   frames_with_pose: number;
-  stroke_rate_spm: number | null;
-  body_roll_proxy_degrees: number | null;
-  breath_count_left: number | null;
-  breath_count_right: number | null;
-  breath_balance_left_ratio: number | null;
+  // NOTE: the old stroke_rate_spm / body_roll_degrees / breath_count fields are
+  // gone on purpose — the pivot bans those numbers; the backend never sends them.
   summary_text: string | null;
   observations: Observation[];
   tracking_gaps: TrackingGap[];
+  instances: StrokeInstance[] | null;
   coach_result: CoachResult | null;
   coach_evidence_urls: Record<string, string> | null;
   coach_share_urls: Record<string, string> | null;
@@ -98,6 +109,7 @@ export type PublicAnalysisJobDetail = {
   status: AnalysisJobStatus;
   stroke_type: string;
   discipline: Discipline;
+  drilldown_unlocked: boolean;
   error_message: string | null;
   created_at: string;
   started_at: string | null;
