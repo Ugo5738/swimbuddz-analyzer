@@ -201,6 +201,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   const recoveries = (r?.instances ?? []).filter(
     (i) => i.phase === "recovery" && i.arm === "near",
   );
+  const consistency = findings.find((f) => f.area === "consistency") ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
 
   return (
@@ -235,7 +236,11 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             <AreaSection
               key={a.key}
               label={a.label}
-              findings={byArea(a.key)}
+              findings={
+                a.key === "recovery_elbow"
+                  ? byArea(a.key).slice(0, 1)
+                  : byArea(a.key)
+              }
               evidenceUrls={evidenceUrls}
               shareUrls={shareUrls}
             />
@@ -255,6 +260,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
         recoveries={recoveries}
         hedged={hedged}
         findings={byArea("recovery_elbow")}
+        consistency={consistency}
         evidenceUrls={evidenceUrls}
       />
 
@@ -404,91 +410,113 @@ function CantSeeCard({ label, copy }: { label: string; copy: string }) {
   );
 }
 
+function ConsistencyCard({ f }: { f: CoachFinding }) {
+  const sev = SEV[f.severity] ?? SEV.info;
+  return (
+    <div className={`mb-3 rounded-xl border p-4 ${sev.tone}`}>
+      <div className="mb-1 flex items-center gap-2">
+        <span className="font-medium">Consistency across your swim</span>
+        <span
+          className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}
+        >
+          {sev.label}
+        </span>
+      </div>
+      <p className="text-sm">{f.observation}</p>
+    </div>
+  );
+}
+
 function RecoveryBrowser({
   unlocked,
   recoveries,
   hedged,
   findings,
+  consistency,
   evidenceUrls,
 }: {
   unlocked: boolean;
   recoveries: StrokeInstance[];
   hedged: number | null;
   findings: CoachFinding[];
+  consistency: CoachFinding | null;
   evidenceUrls: Record<string, string> | null;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
-  if (!unlocked) {
-    const n = hedged ?? 6;
-    return (
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="font-semibold">Your strokes, one by one</span>
-          <Lock size={15} className="text-slate-400" />
-        </div>
-        <div className="flex gap-2 overflow-hidden">
-          {Array.from({ length: Math.min(8, Math.max(4, n)) }).map((_, i) => (
-            <div
-              key={i}
-              className="h-12 w-12 shrink-0 rounded-lg bg-slate-100 blur-[1px]"
-            />
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-slate-400">
-          Per-stroke breakdown unlocks as our stroke detection sharpens — and the
-          number of strokes shown is approximate until it does.
-        </p>
-      </section>
-    );
-  }
-
   const findingFor = (instanceId: number) =>
     findings.find((f) => f.instance_id === instanceId) ?? null;
   const sel = selected != null ? findingFor(selected) : null;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="mb-1 font-semibold">Your strokes, one by one</p>
-      <p className="mb-3 text-xs text-slate-400">
-        We saw ~{recoveries.length} over-water recoveries (approximate). Tap one to
-        see its read.
-      </p>
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {recoveries.map((rec, i) => {
-          const has = findingFor(rec.instance_id);
-          const isSel = selected === rec.instance_id;
-          return (
-            <button
-              key={rec.instance_id}
-              type="button"
-              onClick={() => setSelected(isSel ? null : rec.instance_id)}
-              className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg border text-xs transition ${
-                isSel
-                  ? "border-brand-500 bg-brand-50 text-brand-700"
-                  : has
-                    ? "border-slate-300 hover:border-brand-400"
-                    : "border-slate-200 text-slate-400"
-              }`}
-              aria-pressed={isSel}
-            >
-              <span className="font-semibold">#{i + 1}</span>
-              <span>{rec.peak_s.toFixed(1)}s</span>
-            </button>
-          );
-        })}
+      {consistency ? <ConsistencyCard f={consistency} /> : null}
+
+      <div className="mb-1 flex items-center gap-2">
+        <span className="font-semibold">Your strokes, one by one</span>
+        {!unlocked ? <Lock size={15} className="text-slate-400" /> : null}
       </div>
-      {selected != null ? (
-        <div className="mt-3">
-          {sel ? (
-            <FindingCard f={sel} evidenceUrls={evidenceUrls} shareUrls={null} />
-          ) : (
-            <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
-              We coached a sample of your recoveries — a deeper per-stroke inspect
-              for this one is coming soon.
-            </p>
-          )}
-        </div>
-      ) : null}
+
+      {!unlocked ? (
+        <>
+          <div className="flex gap-2 overflow-hidden">
+            {Array.from({ length: Math.min(8, Math.max(4, hedged ?? 6)) }).map(
+              (_, i) => (
+                <div
+                  key={i}
+                  className="h-12 w-12 shrink-0 rounded-lg bg-slate-100 blur-[1px]"
+                />
+              ),
+            )}
+          </div>
+          <p className="mt-2 text-xs text-slate-400">
+            Per-stroke breakdown unlocks as our stroke detection sharpens — and the
+            number of strokes shown is approximate until it does.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-xs text-slate-400">
+            We saw ~{recoveries.length} over-water recoveries (approximate). Tap one
+            to see its read.
+          </p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {recoveries.map((rec, i) => {
+              const has = findingFor(rec.instance_id);
+              const isSel = selected === rec.instance_id;
+              return (
+                <button
+                  key={rec.instance_id}
+                  type="button"
+                  onClick={() => setSelected(isSel ? null : rec.instance_id)}
+                  className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg border text-xs transition ${
+                    isSel
+                      ? "border-brand-500 bg-brand-50 text-brand-700"
+                      : has
+                        ? "border-slate-300 hover:border-brand-400"
+                        : "border-slate-200 text-slate-400"
+                  }`}
+                  aria-pressed={isSel}
+                >
+                  <span className="font-semibold">#{i + 1}</span>
+                  <span>{rec.peak_s.toFixed(1)}s</span>
+                </button>
+              );
+            })}
+          </div>
+          {selected != null ? (
+            <div className="mt-3">
+              {sel ? (
+                <FindingCard f={sel} evidenceUrls={evidenceUrls} shareUrls={null} />
+              ) : (
+                <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
+                  We coached a sample of your recoveries — a deeper per-stroke inspect
+                  for this one is coming soon.
+                </p>
+              )}
+            </div>
+          ) : null}
+        </>
+      )}
     </section>
   );
 }
