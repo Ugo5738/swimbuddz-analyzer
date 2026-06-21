@@ -49,7 +49,10 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
   created_at: STAMP,
   started_at: STAMP,
   completed_at: STAMP,
-  original_video_url: null,
+  // Generated placeholder media (public/demo/*) so /r/demo previews the real,
+  // image-forward experience: a stylized side-on clip with an AI pose overlay,
+  // plus evidence stills pulled from it. Real runs use the swimmer's own clip.
+  original_video_url: "/demo/clip.mp4",
   annotated_video_url: null,
   result: {
     detected_stroke: "freestyle",
@@ -60,7 +63,14 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
     observations: [],
     tracking_gaps: [],
     instances: [0, 1, 2, 3, 4, 5].map((i) => rec(i, 1.4 + i * 1.1)),
-    coach_evidence_urls: null,
+    coach_evidence_urls: {
+      "recovery_coach:5": "/demo/frame_rec1.jpg",
+      "recovery_coach:13": "/demo/frame_rec2.jpg",
+      "recovery_coach:25": "/demo/frame_rec3.jpg",
+      "body_line:9": "/demo/frame_body.jpg",
+      "head_breathing:11": "/demo/frame_head.jpg",
+      "entry_reach:7": "/demo/frame_entry.jpg",
+    },
     coach_share_urls: null,
     coach_result: {
       input_profile: "side_on_above_water",

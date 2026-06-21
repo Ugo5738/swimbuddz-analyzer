@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   EyeOff,
   GraduationCap,
   Info,
@@ -314,6 +315,8 @@ function ResultBody({
         findings={byArea("recovery_elbow")}
         consistency={consistency}
         evidenceUrls={evidenceUrls}
+        clip={clip}
+        onEvidence={onEvidence}
         jobId={jobId}
         token={token}
         canInspect={detail.drilldown_unlocked && jobId !== "demo" && !!token}
@@ -813,6 +816,8 @@ function RecoveryBrowser({
   findings,
   consistency,
   evidenceUrls,
+  clip,
+  onEvidence,
   jobId,
   token,
   canInspect,
@@ -823,6 +828,8 @@ function RecoveryBrowser({
   findings: CoachFinding[];
   consistency: CoachFinding | null;
   evidenceUrls: Record<string, string> | null;
+  clip: string | null;
+  onEvidence: (frame: string | undefined, t: number) => void;
   jobId: string;
   token: string | null;
   canInspect: boolean;
@@ -834,6 +841,14 @@ function RecoveryBrowser({
 
   const findingFor = (id: number) =>
     extra[id] ?? findings.find((f) => f.instance_id === id) ?? null;
+
+  // Thumbnail for a recovery tile: its coached finding's evidence frame, if any.
+  const thumbFor = (id: number) => {
+    const fnd = findingFor(id);
+    const fr = fnd?.evidence_frames?.[0];
+    if (!fnd || !fr || !evidenceUrls) return undefined;
+    return evidenceUrls[`${fnd.component}:${fr.index}`];
+  };
 
   const onTap = async (id: number) => {
     if (selected === id) {
@@ -913,22 +928,44 @@ function RecoveryBrowser({
             {recoveries.map((rec, i) => {
               const isSel = selected === rec.instance_id;
               const has = findingFor(rec.instance_id);
+              const thumb = thumbFor(rec.instance_id);
               return (
                 <button
                   key={rec.instance_id}
                   type="button"
                   onClick={() => void onTap(rec.instance_id)}
-                  className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg border text-xs transition ${
-                    isSel
-                      ? "border-brand-500 bg-brand-50 text-brand-700"
-                      : has
-                        ? "border-slate-300 hover:border-brand-400"
-                        : "border-slate-200 text-slate-400"
-                  }`}
                   aria-pressed={isSel}
+                  className={`relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border text-left transition ${
+                    isSel
+                      ? "border-brand-500 ring-2 ring-brand-300"
+                      : has
+                        ? "border-emerald-300 hover:border-brand-400"
+                        : "border-slate-200 hover:border-brand-300"
+                  }`}
                 >
-                  <span className="font-semibold">#{i + 1}</span>
-                  <span>{rec.peak_s.toFixed(1)}s</span>
+                  {thumb ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={thumb}
+                      alt={`Recovery ${i + 1}`}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-gradient-to-b from-sky-100 to-sky-300" />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+                  {has ? (
+                    <span className="absolute right-1 top-1 rounded-full bg-emerald-500 p-0.5 text-white shadow">
+                      <Check size={10} strokeWidth={3} />
+                    </span>
+                  ) : (
+                    <span className="absolute right-1 top-1 rounded-full bg-white/85 px-1.5 text-[10px] font-medium text-slate-500">
+                      tap
+                    </span>
+                  )}
+                  <span className="absolute bottom-1 left-1.5 text-[11px] font-semibold text-white drop-shadow-sm">
+                    #{i + 1} · {rec.peak_s.toFixed(1)}s
+                  </span>
                 </button>
               );
             })}
@@ -941,7 +978,13 @@ function RecoveryBrowser({
                   stroke…
                 </p>
               ) : sel ? (
-                <FindingCard f={sel} evidenceUrls={evidenceUrls} shareUrls={null} />
+                <FindingCard
+                  f={sel}
+                  evidenceUrls={evidenceUrls}
+                  shareUrls={null}
+                  clip={clip}
+                  onEvidence={onEvidence}
+                />
               ) : inspectError ? (
                 <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
                   {inspectError}
