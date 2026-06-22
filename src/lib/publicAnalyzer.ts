@@ -77,10 +77,11 @@ export type StrokeInstance = {
 };
 
 export type AnalysisResultPayload = {
-  detected_stroke: string;
-  pose_detection_rate: number;
-  frames_total: number;
-  frames_with_pose: number;
+  // Null on coach-primary runs (the legacy pose/metrics pass is retired).
+  detected_stroke: string | null;
+  pose_detection_rate: number | null;
+  frames_total: number | null;
+  frames_with_pose: number | null;
   // NOTE: the old stroke_rate_spm / body_roll_degrees / breath_count fields are
   // gone on purpose — the pivot bans those numbers; the backend never sends them.
   summary_text: string | null;
