@@ -168,7 +168,16 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   );
   const onEvidence = (frame: string | undefined, t: number) => setViewer({ frame, t });
 
-  if (detail.status === "pending" || detail.status === "processing") {
+  const r = detail.result;
+  const coach = r?.coach_result ?? null;
+  const isWorking = detail.status === "pending" || detail.status === "processing";
+  // Progressive rendering: the worker persists a partial result after each stage,
+  // so once any analysis stage has landed we render what's ready (and keep polling
+  // for the rest) instead of a blank "analyzing" wait.
+  const hasPartial =
+    coach != null && coach.results.some((c) => c.component !== "gate");
+
+  if (isWorking && !hasPartial) {
     return (
       <Centered>
         <Loader2 className="animate-spin text-brand-600" size={32} />
@@ -181,9 +190,6 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
       </Centered>
     );
   }
-
-  const r = detail.result;
-  const coach = r?.coach_result ?? null;
 
   if (detail.status === "failed" || coach?.refused) {
     return <RefusalCard reason={detail.error_message} />;
@@ -224,6 +230,13 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
           </span>
         </div>
+        {isWorking ? (
+          <p className="mt-3 flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-700">
+            <Loader2 className="animate-spin" size={16} />
+            Still analyzing — more sections appear as each part finishes. We&apos;ll
+            email you when it&apos;s done.
+          </p>
+        ) : null}
         {coach?.gate_tier === "borderline" ? (
           <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Your camera angle is borderline — film a truer side-on view for sharper
