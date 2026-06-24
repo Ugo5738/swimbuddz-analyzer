@@ -10,7 +10,6 @@ import {
   Loader2,
   PlayCircle,
   Share2,
-  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
@@ -160,13 +159,25 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
 
 function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   // Hooks must run before any early return.
-  const [viewer, setViewer] = useState<{ frame?: string; t: number } | null>(null);
-  const [view, setView] = useState<"coach" | "timeline">("coach");
+  const [view, setView] = useState<"above" | "under">("above");
+  const videoRef = useRef<HTMLVideoElement>(null);
   const cycles = useMemo(() => buildCycles(detail), [detail]);
   const [openCycle, setOpenCycle] = useState<number | null>(() =>
     defaultOpenCycle(cycles),
   );
-  const onEvidence = (frame: string | undefined, t: number) => setViewer({ frame, t });
+  // Inline (no modal): clicking a read seeks the sticky clip to that moment and
+  // brings it into view — read and watch in one place, no scroll-hunting.
+  const onEvidence = (_frame: string | undefined, t: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      v.currentTime = Math.max(0, t);
+      void v.play();
+    } catch {
+      /* autoplay may be blocked — the seek still lands */
+    }
+    v.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
   const r = detail.result;
   const coach = r?.coach_result ?? null;
@@ -229,6 +240,11 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           <span className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700">
             Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
           </span>
+          {coach ? (
+            <div className="ml-auto">
+              <ShareRead topFix={topFix} />
+            </div>
+          ) : null}
         </div>
         {isWorking ? (
           <p className="mt-3 flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-700">
@@ -243,19 +259,16 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             feedback.
           </p>
         ) : null}
-        {detail.timeline_unlocked ? (
-          <ViewSelector view={view} setView={setView} />
-        ) : null}
+        {coach ? <ViewSelector view={view} setView={setView} /> : null}
       </div>
 
-      {view === "timeline" && detail.timeline_unlocked ? (
-        <TimelineView
-          clip={clip}
-          findings={findings}
-          evidenceUrls={evidenceUrls}
-          onEvidence={onEvidence}
-        />
-      ) : coach ? (
+      {!coach ? (
+        <p className="text-slate-600">
+          We finished, but couldn&apos;t produce a coached read for this clip.
+        </p>
+      ) : view === "under" ? (
+        <CantSeeStrip />
+      ) : (
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
           <div className="space-y-6">
             {verdict.fixes.length ? (
@@ -282,10 +295,6 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
               />
             ) : null}
 
-            <ShareRead topFix={topFix} />
-
-            <CantSeeStrip />
-
             {cycles.length ? (
               <StrokeByStroke
                 cycles={cycles}
@@ -302,6 +311,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           <div className="mt-6 space-y-4 lg:mt-0 lg:sticky lg:top-6">
             {clip ? (
               <video
+                ref={videoRef}
                 src={clip}
                 controls
                 playsInline
@@ -313,22 +323,9 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
             <BuyMore />
           </div>
         </div>
-      ) : (
-        <p className="text-slate-600">
-          We finished, but couldn&apos;t produce a coached read for this clip.
-        </p>
       )}
 
       <AcademyCTA />
-
-      {viewer ? (
-        <EvidenceViewer
-          frameUrl={viewer.frame}
-          timestamp={viewer.t}
-          clip={clip}
-          onClose={() => setViewer(null)}
-        />
-      ) : null}
     </div>
   );
 }
@@ -755,8 +752,8 @@ function ViewSelector({
   view,
   setView,
 }: {
-  view: "coach" | "timeline";
-  setView: (v: "coach" | "timeline") => void;
+  view: "above" | "under";
+  setView: (v: "above" | "under") => void;
 }) {
   const tab = (active: boolean) =>
     active
@@ -764,11 +761,11 @@ function ViewSelector({
       : "rounded-md px-3 py-1 text-slate-500";
   return (
     <div className="mt-3 inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
-      <button type="button" onClick={() => setView("coach")} className={tab(view === "coach")}>
-        Coach&apos;s read
+      <button type="button" onClick={() => setView("above")} className={tab(view === "above")}>
+        Above water
       </button>
-      <button type="button" onClick={() => setView("timeline")} className={tab(view === "timeline")}>
-        Timeline
+      <button type="button" onClick={() => setView("under")} className={tab(view === "under")}>
+        Underwater
       </button>
     </div>
   );
@@ -780,191 +777,6 @@ const AREA_SHORT: Record<string, string> = {
   head_breath: "head",
   entry_reach: "entry",
 };
-
-function TimelineView({
-  clip,
-  findings,
-  evidenceUrls,
-  onEvidence,
-}: {
-  clip: string | null;
-  findings: CoachFinding[];
-  evidenceUrls: Record<string, string> | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [duration, setDuration] = useState(0);
-  const [current, setCurrent] = useState(0);
-
-  const moments = findings
-    .filter(
-      (f) =>
-        f.evidence_frames[0] &&
-        f.area !== "consistency" &&
-        (f.severity === "fix" || f.severity === "strength"),
-    )
-    .map((f) => ({ f, t: f.evidence_frames[0].timestamp_s }))
-    .sort((a, b) => a.t - b.t);
-
-  const span = duration || (moments.length ? moments[moments.length - 1].t + 1 : 1);
-  const active = [...moments].reverse().find((m) => m.t <= current + 0.3) ?? moments[0] ?? null;
-
-  const seek = (t: number) => {
-    setCurrent(t);
-    const v = videoRef.current;
-    if (v) {
-      v.currentTime = t;
-      void v.play?.()?.catch(() => {});
-    }
-  };
-
-  if (moments.length === 0) {
-    return (
-      <p className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-        No flagged moments to place on a timeline for this clip.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {clip ? (
-        <video
-          ref={videoRef}
-          src={clip}
-          controls
-          playsInline
-          preload="none"
-          className="w-full rounded-2xl bg-black"
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-          onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        />
-      ) : (
-        <div className="flex aspect-video w-full items-center justify-center rounded-2xl bg-slate-100 text-sm text-slate-400">
-          Your clip plays here — upload a real clip to watch it sync.
-        </div>
-      )}
-
-      <div className="relative mx-2 mt-4 h-1.5 rounded-full bg-slate-100">
-        {moments.map((m, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => seek(m.t)}
-            aria-label={`Jump to ${m.t.toFixed(1)} seconds`}
-            style={{ left: `${(m.t / span) * 100}%` }}
-            className={`absolute -top-1.5 h-4 w-4 -translate-x-1/2 rounded-full border-2 border-white ${
-              m.f.severity === "fix" ? "bg-amber-400" : "bg-emerald-400"
-            } ${active === m ? "ring-2 ring-brand-400" : ""}`}
-          />
-        ))}
-        <div
-          style={{ left: `${Math.min(100, (current / span) * 100)}%` }}
-          className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 bg-slate-600"
-        />
-      </div>
-
-      {active ? (
-        <FindingCard
-          f={active.f}
-          evidenceUrls={evidenceUrls}
-          shareUrls={null}
-          clip={clip}
-          onEvidence={onEvidence}
-        />
-      ) : null}
-
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span className="shrink-0 text-slate-400">Jump to:</span>
-        {moments.map((m, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => seek(m.t)}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 ${
-              active === m
-                ? "border-brand-400 bg-brand-50 text-brand-700"
-                : "border-slate-200 text-slate-600"
-            }`}
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${m.f.severity === "fix" ? "bg-amber-400" : "bg-emerald-400"}`}
-            />
-            {m.t.toFixed(0)}s {AREA_SHORT[m.f.area ?? ""] ?? ""}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EvidenceViewer({
-  frameUrl,
-  timestamp,
-  clip,
-  onClose,
-}: {
-  frameUrl?: string;
-  timestamp: number;
-  clip: string | null;
-  onClose: () => void;
-}) {
-  const start = Math.max(0, timestamp - 0.4);
-  const end = timestamp + 0.8;
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute -top-9 right-0 text-white"
-          aria-label="Close"
-        >
-          <X size={24} />
-        </button>
-        {clip ? (
-          <video
-            src={clip}
-            autoPlay
-            muted
-            playsInline
-            className="w-full rounded-xl bg-black"
-            onLoadedMetadata={(e) => {
-              e.currentTarget.currentTime = start;
-            }}
-            onTimeUpdate={(e) => {
-              if (e.currentTarget.currentTime >= end) {
-                e.currentTarget.currentTime = start;
-              }
-            }}
-          />
-        ) : frameUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={frameUrl}
-            alt="Evidence frame"
-            className="w-full rounded-xl bg-black"
-          />
-        ) : (
-          <div className="rounded-xl bg-slate-800 p-8 text-center text-sm text-slate-300">
-            No frame available for this moment.
-          </div>
-        )}
-        <p className="mt-2 text-center text-xs text-white/70">
-          {clip
-            ? `Looping ${timestamp.toFixed(1)}s in your clip`
-            : `Frame at ${timestamp.toFixed(1)}s`}
-        </p>
-      </div>
-    </div>
-  );
-}
 
 function CantSeeStrip() {
   return (
@@ -1045,9 +857,11 @@ function ShareRead({ topFix }: { topFix: string | null }) {
     <button
       type="button"
       onClick={onShare}
-      className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"
+      title="Share my read"
+      aria-label="Share my read"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-white px-3 py-1.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"
     >
-      <Share2 size={16} /> Share my read
+      <Share2 size={16} /> Share
     </button>
   );
 }
