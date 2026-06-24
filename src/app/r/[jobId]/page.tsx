@@ -313,11 +313,10 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   );
 }
 
-// Per-clip viewer — lives INSIDE a coach card, not a sidebar player. Three things:
-//   • drag-to-scrub: moving the cursor across it walks the frames around the coached
-//     moment (cursor X → video time, no click-to-play). Window centred on `t`.
-//   • expand (⤢): opens a full-screen YouTube-style player (native play / draggable
-//     timeline / volume / browser fullscreen), seeked to the moment.
+// Per-clip viewer — a REAL (native) video player inside the coach card, so it behaves
+// exactly like YouTube: click the body to play/pause, drag the SEEK BAR (only the bar)
+// to scrub, native volume + fullscreen. It opens paused on the coached moment.
+//   • expand (⤢): full-screen player looped to the selected moment (the chunk).
 //   • hide (◎): collapses THIS clip (only this one) to a one-line "Show clip" stub.
 function ClipViewer({
   clip,
@@ -334,32 +333,6 @@ function ClipViewer({
 }) {
   const [hidden, setHidden] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const start = Math.max(0, t - half);
-  const span = half * 2; // scrub window length, in seconds
-  // Where `t` sits inside the window as a 0..1 fraction (centre, unless clamped at 0).
-  const [pos, setPos] = useState(() => Math.min(1, (t - start) / span));
-  const ref = useRef<HTMLVideoElement>(null);
-  const pending = useRef<number | null>(null);
-  // Coalesce seeks: only fire the next one once the current finishes (`seeking`),
-  // so dragging stays smooth instead of queuing every mousemove.
-  const apply = () => {
-    const v = ref.current;
-    if (!v || pending.current == null || v.seeking) return;
-    const target = pending.current;
-    pending.current = null;
-    try {
-      v.currentTime = target;
-    } catch {
-      /* metadata not ready yet — next move retries */
-    }
-  };
-  const scrubTo = (clientX: number, el: HTMLElement) => {
-    const rect = el.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    setPos(frac); // move the thumb under the cursor immediately
-    pending.current = start + frac * span;
-    apply();
-  };
 
   if (!clip) {
     // No video to scrub — fall back to the static evidence frame if we have one.
@@ -388,41 +361,30 @@ function ClipViewer({
   return (
     <>
       <div
-        // touch-pan-y: a vertical drag still scrolls the page (browser owns it); only
-        // a horizontal drag scrubs — so a clip never traps the scroll on mobile.
-        className={`group relative cursor-ew-resize touch-pan-y select-none overflow-hidden rounded-lg border border-slate-200 bg-black ${className}`}
-        aria-label={`Clip around ${fmtTime(t)} — drag to scrub, or use the expand button for the full player`}
-        onMouseMove={(e) => scrubTo(e.clientX, e.currentTarget)}
-        onTouchStart={(e) =>
-          e.touches[0] && scrubTo(e.touches[0].clientX, e.currentTarget)
-        }
-        onTouchMove={(e) =>
-          e.touches[0] && scrubTo(e.touches[0].clientX, e.currentTarget)
-        }
+        className={`group relative overflow-hidden rounded-lg border border-slate-200 bg-black ${className}`}
       >
+        {/* Native player: the browser's own controls. The seek bar is the ONLY thing
+            that scrubs (drag the line); the body just plays/pauses — exactly YouTube. */}
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video
-          ref={ref}
           src={clip}
           poster={poster}
-          muted
+          controls
           playsInline
-          // metadata (not none): the seek index must be ready so the FIRST drag scrubs
-          // instantly. Same clip URL across cards → the browser fetches it once and
-          // serves the rest from cache, so N viewers ≈ one metadata load.
           preload="metadata"
-          onSeeked={apply}
           onLoadedMetadata={(e) => {
+            // open paused on the coached moment
             const v = e.currentTarget;
             v.currentTime = Math.min(t, v.duration || t);
           }}
-          className="pointer-events-none block h-auto w-full"
+          className="block h-auto w-full"
         />
-        {/* top-right controls — always tappable (touch has no hover) */}
+        {/* overlay controls — top-right, clear of the native bar (which sits bottom) */}
         <div className="absolute right-1.5 top-1.5 flex gap-1.5">
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            aria-label="Open full-screen player"
+            aria-label="Watch the selected moment full-screen"
             className="rounded-md bg-black/55 p-1.5 text-white transition hover:bg-black/75"
           >
             <Maximize2 size={14} />
@@ -435,29 +397,6 @@ function ClipViewer({
           >
             <EyeOff size={14} />
           </button>
-        </div>
-        {/* YouTube-style seek bar — drag anywhere on the clip and the thumb (and the
-            frames) follow. Track thickens on hover, a time bubble rides the playhead.
-            pointer-events-none: the container owns the drag; this is the visible track. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/70 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-2.5">
-          {/* full-bleed so thumb-left% lines up exactly with the cursor's X fraction */}
-          <div className="relative h-1 bg-white/30 transition-all group-hover:h-1.5">
-            <div
-              className="absolute inset-y-0 left-0 bg-red-500"
-              style={{ width: `${pos * 100}%` }}
-            />
-            <div
-              className="absolute bottom-3 -translate-x-1/2 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white opacity-0 transition group-hover:opacity-100"
-              style={{ left: `${pos * 100}%` }}
-            >
-              {fmtTime(start + pos * span)}
-            </div>
-            <div
-              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 scale-90 rounded-full bg-red-500 shadow-md ring-1 ring-black/20 transition group-hover:scale-100"
-              style={{ left: `${pos * 100}%` }}
-            />
-          </div>
         </div>
       </div>
       {expanded ? (
