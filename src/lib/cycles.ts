@@ -57,7 +57,8 @@ export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
   const recoverySlot = ABOVE_WATER.findIndex((a) => a.key === "recovery_elbow");
   const findings = (r?.coach_result?.results ?? []).flatMap((c) => c.findings);
   for (const f of findings) {
-    if (f.area !== "recovery_elbow" || typeof f.instance_id !== "number") continue;
+    if (f.area !== "recovery_elbow" || typeof f.instance_id !== "number")
+      continue;
     const ci = cycles.findIndex((c) => c.id === f.instance_id);
     if (ci < 0) continue;
     if (!cycles[ci].subReads[recoverySlot].finding) {
@@ -99,19 +100,34 @@ export function defaultOpenCycle(cycles: Cycle[]): number | null {
 }
 
 export const rankOf = (f: CoachFinding): number =>
-  typeof f.extra?.rank === 'number' ? (f.extra.rank as number) : 9;
+  typeof f.extra?.rank === "number" ? (f.extra.rank as number) : 9;
 
 // Continuous (every-stroke) faults — stated ONCE as a stroke-wide habit, never
 // pinned to a single cycle. Recovery-elbow is the one aspect that genuinely
 // varies stroke to stroke, so its story is the across-strokes fatigue read
 // (area "consistency"), not a per-cycle fix.
-const CONTINUOUS = new Set(['body_line', 'head_breath', 'entry_reach']);
+const CONTINUOUS = new Set(["body_line", "head_breath", "entry_reach"]);
 
 export type Verdict = {
   fixes: CoachFinding[]; // ranked top fixes — the page's spine
   strengths: CoachFinding[]; // what's working
   notes: CoachFinding[]; // info-level observations
+  cantSee: CoachFinding[]; // the camera couldn't show it — NOT a fault
 };
+
+// A "can't-see" read: the model is reporting a VISIBILITY limit, not technique.
+// These must never sit next to real strengths (it reads as if not-seeing is a fault).
+// Signal order: explicit backend flags first, then the model's own phrasing.
+const CANT_SEE_RE =
+  /(not (clearly )?visible|isn'?t (clearly )?visible|not clearly show|does(n'?t| not) (clearly )?show|can'?t (be )?seen?|cannot be seen|couldn'?t (see|tell|make out)|out of (the )?frame|obscured|too (dark|blurry|far)|hard to (see|tell)|unclear)/i;
+
+function isCantSee(f: CoachFinding): boolean {
+  return (
+    f.severity === "unavailable" ||
+    f.available === false ||
+    CANT_SEE_RE.test(f.observation)
+  );
+}
 
 // The coach's VERDICT: lead with ranked faults+fixes, not cycles. One finding per
 // aspect (continuous habits stated once); the elbow story comes in as the fatigue
@@ -119,7 +135,7 @@ export type Verdict = {
 export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
   const findings = (detail.result?.coach_result?.results ?? [])
     .flatMap((c) => c.findings)
-    .filter((f) => f.component !== 'gate' && f.component !== 'collate');
+    .filter((f) => f.component !== "gate" && f.component !== "collate");
 
   const dedupeByArea = (list: CoachFinding[]): CoachFinding[] => {
     const seen = new Set<string>();
@@ -137,13 +153,22 @@ export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
   const fixes = dedupeByArea(
     sorted.filter(
       (f) =>
-        f.severity === 'fix' &&
-        (CONTINUOUS.has(f.area ?? '') || f.area === 'consistency'),
+        f.severity === "fix" &&
+        (CONTINUOUS.has(f.area ?? "") || f.area === "consistency"),
     ),
   );
-  const strengths = dedupeByArea(sorted.filter((f) => f.severity === 'strength'));
-  const notes = dedupeByArea(
-    sorted.filter((f) => f.severity === 'info' && f.area !== 'consistency'),
+  // Pull can't-see reads OUT of strengths/notes into their own bucket so the UI can
+  // show them apart from real coaching (a camera limit isn't a strength OR a fault).
+  const strengths = dedupeByArea(
+    sorted.filter((f) => f.severity === "strength" && !isCantSee(f)),
   );
-  return { fixes, strengths, notes };
+  const notes = dedupeByArea(
+    sorted.filter(
+      (f) => f.severity === "info" && f.area !== "consistency" && !isCantSee(f),
+    ),
+  );
+  const cantSee = dedupeByArea(
+    sorted.filter((f) => f.severity !== "fix" && isCantSee(f)),
+  );
+  return { fixes, strengths, notes, cantSee };
 }

@@ -220,7 +220,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   // view is demoted to a "stroke by stroke" evidence lens below.
   const verdict = coach
     ? buildVerdict(detail)
-    : { fixes: [], strengths: [], notes: [] };
+    : { fixes: [], strengths: [], notes: [], cantSee: [] };
   const topFix = verdict.fixes[0]?.observation ?? null;
 
   return (
@@ -285,6 +285,10 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
               />
             ) : null}
 
+            {verdict.cantSee.length ? (
+              <CantSeeNotes notes={verdict.cantSee} />
+            ) : null}
+
             {cycles.length ? (
               <StrokeByStroke
                 cycles={cycles}
@@ -298,6 +302,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
           </div>
 
           <div className="mt-6 space-y-4 lg:mt-0 lg:sticky lg:top-6">
+            {clip ? <FullClipPlayer clip={clip} /> : null}
             <BuyMore />
           </div>
         </div>
@@ -431,47 +436,63 @@ function ClipViewer({
             <EyeOff size={14} />
           </button>
         </div>
-        {/* the line to drag on — a real seek bar. Drag anywhere across the clip and
-            the thumb (and the frames) follow. pointer-events-none so the container's
-            drag handler owns the gesture; this is purely the visible track + playhead. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/60 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-2">
+        {/* YouTube-style seek bar — drag anywhere on the clip and the thumb (and the
+            frames) follow. Track thickens on hover, a time bubble rides the playhead.
+            pointer-events-none: the container owns the drag; this is the visible track. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/70 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-2.5">
           {/* full-bleed so thumb-left% lines up exactly with the cursor's X fraction */}
-          <div className="relative h-1 bg-white/35">
+          <div className="relative h-1 bg-white/30 transition-all group-hover:h-1.5">
             <div
-              className="absolute inset-y-0 left-0 bg-white"
+              className="absolute inset-y-0 left-0 bg-red-500"
               style={{ width: `${pos * 100}%` }}
             />
             <div
-              className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-md ring-1 ring-black/20"
+              className="absolute bottom-3 -translate-x-1/2 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white opacity-0 transition group-hover:opacity-100"
+              style={{ left: `${pos * 100}%` }}
+            >
+              {fmtTime(start + pos * span)}
+            </div>
+            <div
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 scale-90 rounded-full bg-red-500 shadow-md ring-1 ring-black/20 transition group-hover:scale-100"
               style={{ left: `${pos * 100}%` }}
             />
           </div>
         </div>
-        <span className="pointer-events-none absolute bottom-3.5 left-2.5 rounded bg-black/45 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100">
-          drag to scrub
-        </span>
       </div>
       {expanded ? (
-        <ClipLightbox clip={clip} t={t} onClose={() => setExpanded(false)} />
+        <ClipLightbox
+          clip={clip}
+          t={t}
+          half={half}
+          onClose={() => setExpanded(false)}
+        />
       ) : null}
     </>
   );
 }
 
-// Full-screen YouTube-style player. Rendered via a portal to <body> so it escapes the
-// result page's `lg:-translate-x-1/2` ancestor (a transform breaks position:fixed).
-// Native <video controls> gives play/pause, a draggable timeline, volume, and the
-// browser's own fullscreen button — and it starts at the coached moment.
+// Full-screen player. Portalled to <body> so it escapes the result page's
+// `lg:-translate-x-1/2` ancestor (a transform breaks position:fixed). Native
+// <video controls> gives the YouTube-style slider / play / volume / fullscreen.
+// By default it LOOPS the selected moment [t-half, t+half] (the chunk Daniel asked
+// for); "Play full clip" lifts the clamp to watch the whole swim.
 function ClipLightbox({
   clip,
   t,
+  half = 1.25,
   onClose,
 }: {
   clip: string;
   t: number;
+  half?: number;
   onClose: () => void;
 }) {
+  const vref = useRef<HTMLVideoElement>(null);
+  const [full, setFull] = useState(false);
+  const start = Math.max(0, t - half);
+  const end = t + half;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -484,6 +505,12 @@ function ClipLightbox({
       document.body.style.overflow = prevOverflow;
     };
   }, [onClose]);
+
+  // Re-anchor to the chunk start whenever we switch back from full-clip.
+  useEffect(() => {
+    const v = vref.current;
+    if (v && !full) v.currentTime = Math.min(start, v.duration || start);
+  }, [full, start]);
 
   if (typeof document === "undefined") return null;
   return createPortal(
@@ -502,21 +529,69 @@ function ClipLightbox({
       >
         <X size={20} />
       </button>
+      <div
+        className="flex flex-col items-center gap-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video
+          ref={vref}
+          src={clip}
+          controls
+          autoPlay
+          loop={!full}
+          playsInline
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            v.currentTime = full ? 0 : Math.min(start, v.duration || start);
+          }}
+          onTimeUpdate={(e) => {
+            // Keep playback inside the selected moment unless "full clip" is on.
+            const v = e.currentTarget;
+            if (
+              !full &&
+              (v.currentTime > end || v.currentTime < start - 0.05)
+            ) {
+              v.currentTime = start;
+            }
+          }}
+          className="max-h-[80vh] max-w-[92vw] rounded-lg bg-black shadow-2xl"
+        />
+        <div className="flex items-center gap-3 text-sm text-white/90">
+          <span className="tabular-nums">
+            {full
+              ? "Full swim"
+              : `Selected moment · ${fmtTime(start)}–${fmtTime(end)}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFull((f) => !f)}
+            className="rounded-full border border-white/30 px-3 py-1 font-medium hover:bg-white/10"
+          >
+            {full ? "Just this moment" : "Play full clip"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// The whole swim, top-right — back by request. Native controls so the user can
+// watch the full clip continuously (the per-finding ClipViewers are zoomed moments).
+function FullClipPlayer({ clip }: { clip: string }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-3">
+      <p className="mb-2 text-sm font-semibold">Your full swim</p>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
         src={clip}
         controls
-        autoPlay
         playsInline
-        onClick={(e) => e.stopPropagation()}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          v.currentTime = Math.min(t, v.duration || t);
-        }}
-        className="max-h-[88vh] max-w-[92vw] rounded-lg bg-black shadow-2xl"
+        preload="metadata"
+        className="w-full rounded-lg bg-black"
       />
-    </div>,
-    document.body,
+    </section>
   );
 }
 
@@ -594,6 +669,38 @@ function FixCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Visibility limits, kept clearly apart from coaching. "Hand entry not visible" is
+// the camera's fault, not the swimmer's — showing it next to strengths reads as a
+// failing. Neutral styling + copy that names it as an angle limit, not a critique.
+function CantSeeNotes({ notes }: { notes: CoachFinding[] }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <EyeOff size={16} className="text-slate-400" />
+        <p className="font-semibold text-slate-700">
+          What we couldn&apos;t see clearly
+        </p>
+      </div>
+      <p className="mb-3 text-sm text-slate-500">
+        Not faults — the camera angle just didn&apos;t show these. A truer
+        side-on clip (filmed level with the water, swimmer filling the frame)
+        would let us coach them.
+      </p>
+      <ul className="space-y-1.5">
+        {notes.map((f, i) => (
+          <li
+            key={f.area ?? `${f.component}-${i}`}
+            className="flex items-start gap-2 text-sm text-slate-600"
+          >
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" />
+            {f.observation}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

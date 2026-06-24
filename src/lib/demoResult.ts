@@ -107,7 +107,8 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               component: "recovery_coach",
               area: "recovery_elbow",
               severity: "fix",
-              observation: "The elbow starts dropping below the hand on this stroke.",
+              observation:
+                "The elbow starts dropping below the hand on this stroke.",
               instance_id: 5,
               evidence_frames: [{ index: 25, timestamp_s: 6.9 }],
               extra: {
@@ -115,7 +116,8 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
                 t: 6.9,
                 why_it_matters:
                   "A dropped elbow late in a sprint signals fatigue and a weaker catch.",
-                drill: "Fingertip-drag drill — keep the elbow high even when tired.",
+                drill:
+                  "Fingertip-drag drill — keep the elbow high even when tired.",
               },
             }),
             f({
@@ -166,7 +168,8 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               extra: {
                 kind: "head",
                 rank: 1,
-                why_it_matters: "Lifting the head sinks the legs and adds drag.",
+                why_it_matters:
+                  "Lifting the head sinks the legs and adds drag.",
                 drill: "Breathe to the side, keep one goggle in the water.",
               },
             }),
@@ -194,6 +197,31 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
               confidence: 0.5,
               evidence_frames: [{ index: 7, timestamp_s: 2.1 }],
               extra: { verdict: "clean_extended" },
+            }),
+          ],
+        },
+        {
+          component: "holistic_coach",
+          cost_usd: 0.004,
+          error: null,
+          meta: {},
+          findings: [
+            // Visibility limits — routed to the "What we couldn't see clearly" section,
+            // never shown as strengths. (Mirrors a real distance clip's output.)
+            f({
+              component: "holistic_coach",
+              area: "entry_reach",
+              severity: "info",
+              observation: "The hand entry is not visible.",
+              confidence: 0.2,
+            }),
+            f({
+              component: "holistic_coach",
+              area: "body_line",
+              severity: "info",
+              observation:
+                "The waterline does not clearly show the body position.",
+              confidence: 0.2,
             }),
           ],
         },
