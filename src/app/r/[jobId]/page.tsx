@@ -5,15 +5,25 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  Eye,
   EyeOff,
   GraduationCap,
   Loader2,
-  PlayCircle,
+  Maximize2,
   Share2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 
 import {
   type CoachFinding,
@@ -157,33 +167,18 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
   },
 };
 
-type Marker = { t: number; severity: string; label: string; key: string };
-
 function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
-  const videoRef = useRef<HTMLVideoElement>(null);
   const cycles = useMemo(() => buildCycles(detail), [detail]);
   const [openCycle, setOpenCycle] = useState<number | null>(() =>
     defaultOpenCycle(cycles),
   );
-  // Inline (no modal): clicking a read seeks the sticky clip to that moment and
-  // brings it into view — read and watch in one place, no scroll-hunting.
-  const onEvidence = (_frame: string | undefined, t: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    try {
-      v.currentTime = Math.max(0, t);
-      void v.play();
-    } catch {
-      /* autoplay may be blocked — the seek still lands */
-    }
-    v.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  };
 
   const r = detail.result;
   const coach = r?.coach_result ?? null;
-  const isWorking = detail.status === "pending" || detail.status === "processing";
+  const isWorking =
+    detail.status === "pending" || detail.status === "processing";
   // Progressive rendering: the worker persists a partial result after each stage,
   // so once any analysis stage has landed we render what's ready (and keep polling
   // for the rest) instead of a blank "analyzing" wait.
@@ -209,12 +204,16 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   }
 
   const findings = coach
-    ? coach.results.flatMap((c) => c.findings).filter((f) => f.component !== "gate")
+    ? coach.results
+        .flatMap((c) => c.findings)
+        .filter((f) => f.component !== "gate")
     : [];
   const collate = findings.find(
     (f) => typeof f.extra?.recovery_count_hedged === "number",
   );
-  const hedged = collate ? (collate.extra.recovery_count_hedged as number) : null;
+  const hedged = collate
+    ? (collate.extra.recovery_count_hedged as number)
+    : null;
   const evidenceUrls = r?.coach_evidence_urls ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
   // Fault-first: lead with the coach's ranked verdict, not the cycles. The cycle
@@ -223,30 +222,6 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
     ? buildVerdict(detail)
     : { fixes: [], strengths: [], notes: [] };
   const topFix = verdict.fixes[0]?.observation ?? null;
-  // A poster so the heavy clip doesn't auto-download on metered data: reuse a
-  // frame we already have.
-  const poster = (() => {
-    for (const f of [...verdict.fixes, ...verdict.strengths]) {
-      const ref = f.evidence_frames[0];
-      const k = ref ? `${f.component}:${ref.index}` : null;
-      if (k && evidenceUrls?.[k]) return evidenceUrls[k];
-    }
-    return undefined;
-  })();
-  // Coached moments → markers on the scrubber. (Borderline clips have their evidence
-  // frames stripped by the backend honesty pass, so there are simply no markers.)
-  const markers: Marker[] = [];
-  for (const f of [...verdict.fixes, ...verdict.strengths, ...verdict.notes]) {
-    const ref = f.evidence_frames[0];
-    if (ref)
-      markers.push({
-        t: ref.timestamp_s,
-        severity: f.severity,
-        label: f.observation,
-        key: `${f.component}:${ref.index}`,
-      });
-  }
-  markers.sort((a, b) => a.t - b.t);
 
   return (
     <div className="space-y-6">
@@ -254,7 +229,8 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold">Your freestyle read</h1>
           <span className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700">
-            Coached for {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
+            Coached for{" "}
+            {DISCIPLINE_LABEL[detail.discipline] ?? "general technique"}
           </span>
           {coach ? (
             <div className="ml-auto">
@@ -265,14 +241,14 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
         {isWorking ? (
           <p className="mt-3 flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-700">
             <Loader2 className="animate-spin" size={16} />
-            Still analyzing — more sections appear as each part finishes. We&apos;ll
-            email you when it&apos;s done.
+            Still analyzing — more sections appear as each part finishes.
+            We&apos;ll email you when it&apos;s done.
           </p>
         ) : null}
         {coach?.gate_tier === "borderline" ? (
           <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            Your camera angle is borderline — film a truer side-on view for sharper
-            feedback.
+            Your camera angle is borderline — film a truer side-on view for
+            sharper feedback.
           </p>
         ) : null}
         {coach ? <ViewSelector view={view} setView={setView} /> : null}
@@ -292,12 +268,11 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
                 fixes={verdict.fixes}
                 evidenceUrls={evidenceUrls}
                 clip={clip}
-                onEvidence={onEvidence}
               />
             ) : (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-                Nothing major to fix in what we can see — your visible basics look
-                solid. Try another angle or session to go deeper.
+                Nothing major to fix in what we can see — your visible basics
+                look solid. Try another angle or session to go deeper.
               </div>
             )}
 
@@ -307,7 +282,6 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
                 notes={verdict.notes}
                 evidenceUrls={evidenceUrls}
                 clip={clip}
-                onEvidence={onEvidence}
               />
             ) : null}
 
@@ -319,20 +293,11 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
                 hedged={hedged}
                 evidenceUrls={evidenceUrls}
                 clip={clip}
-                onEvidence={onEvidence}
               />
             ) : null}
           </div>
 
           <div className="mt-6 space-y-4 lg:mt-0 lg:sticky lg:top-6">
-            {clip ? (
-              <VideoScrubber
-                clip={clip}
-                poster={poster}
-                markers={markers}
-                videoRef={videoRef}
-              />
-            ) : null}
             <BuyMore />
           </div>
         </div>
@@ -343,87 +308,215 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   );
 }
 
-function VideoScrubber({
+// Per-clip viewer — lives INSIDE a coach card, not a sidebar player. Three things:
+//   • drag-to-scrub: moving the cursor across it walks the frames around the coached
+//     moment (cursor X → video time, no click-to-play). Window centred on `t`.
+//   • expand (⤢): opens a full-screen YouTube-style player (native play / draggable
+//     timeline / volume / browser fullscreen), seeked to the moment.
+//   • hide (◎): collapses THIS clip (only this one) to a one-line "Show clip" stub.
+function ClipViewer({
   clip,
+  t,
   poster,
-  markers,
-  videoRef,
+  half = 1.25,
+  className = "",
+}: {
+  clip: string | null;
+  t: number;
+  poster?: string;
+  half?: number;
+  className?: string;
+}) {
+  const [hidden, setHidden] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const start = Math.max(0, t - half);
+  const span = half * 2; // scrub window length, in seconds
+  // Where `t` sits inside the window as a 0..1 fraction (centre, unless clamped at 0).
+  const [pos, setPos] = useState(() => Math.min(1, (t - start) / span));
+  const ref = useRef<HTMLVideoElement>(null);
+  const pending = useRef<number | null>(null);
+  // Coalesce seeks: only fire the next one once the current finishes (`seeking`),
+  // so dragging stays smooth instead of queuing every mousemove.
+  const apply = () => {
+    const v = ref.current;
+    if (!v || pending.current == null || v.seeking) return;
+    const target = pending.current;
+    pending.current = null;
+    try {
+      v.currentTime = target;
+    } catch {
+      /* metadata not ready yet — next move retries */
+    }
+  };
+  const scrubTo = (clientX: number, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    setPos(frac); // move the thumb under the cursor immediately
+    pending.current = start + frac * span;
+    apply();
+  };
+
+  if (!clip) {
+    // No video to scrub — fall back to the static evidence frame if we have one.
+    // eslint-disable-next-line @next/next/no-img-element
+    return poster ? (
+      <img
+        src={poster}
+        alt=""
+        className={`rounded-lg border border-slate-200 ${className}`}
+      />
+    ) : null;
+  }
+
+  if (hidden) {
+    return (
+      <button
+        type="button"
+        onClick={() => setHidden(false)}
+        className={`inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 ${className}`}
+      >
+        <Eye size={14} /> Show clip · {fmtTime(t)}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <div
+        // touch-pan-y: a vertical drag still scrolls the page (browser owns it); only
+        // a horizontal drag scrubs — so a clip never traps the scroll on mobile.
+        className={`group relative cursor-ew-resize touch-pan-y select-none overflow-hidden rounded-lg border border-slate-200 bg-black ${className}`}
+        aria-label={`Clip around ${fmtTime(t)} — drag to scrub, or use the expand button for the full player`}
+        onMouseMove={(e) => scrubTo(e.clientX, e.currentTarget)}
+        onTouchStart={(e) =>
+          e.touches[0] && scrubTo(e.touches[0].clientX, e.currentTarget)
+        }
+        onTouchMove={(e) =>
+          e.touches[0] && scrubTo(e.touches[0].clientX, e.currentTarget)
+        }
+      >
+        <video
+          ref={ref}
+          src={clip}
+          poster={poster}
+          muted
+          playsInline
+          // metadata (not none): the seek index must be ready so the FIRST drag scrubs
+          // instantly. Same clip URL across cards → the browser fetches it once and
+          // serves the rest from cache, so N viewers ≈ one metadata load.
+          preload="metadata"
+          onSeeked={apply}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            v.currentTime = Math.min(t, v.duration || t);
+          }}
+          className="pointer-events-none block h-auto w-full"
+        />
+        {/* top-right controls — always tappable (touch has no hover) */}
+        <div className="absolute right-1.5 top-1.5 flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            aria-label="Open full-screen player"
+            className="rounded-md bg-black/55 p-1.5 text-white transition hover:bg-black/75"
+          >
+            <Maximize2 size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setHidden(true)}
+            aria-label="Hide this clip"
+            className="rounded-md bg-black/55 p-1.5 text-white transition hover:bg-black/75"
+          >
+            <EyeOff size={14} />
+          </button>
+        </div>
+        {/* the line to drag on — a real seek bar. Drag anywhere across the clip and
+            the thumb (and the frames) follow. pointer-events-none so the container's
+            drag handler owns the gesture; this is purely the visible track + playhead. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/60 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-2">
+          {/* full-bleed so thumb-left% lines up exactly with the cursor's X fraction */}
+          <div className="relative h-1 bg-white/35">
+            <div
+              className="absolute inset-y-0 left-0 bg-white"
+              style={{ width: `${pos * 100}%` }}
+            />
+            <div
+              className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-md ring-1 ring-black/20"
+              style={{ left: `${pos * 100}%` }}
+            />
+          </div>
+        </div>
+        <span className="pointer-events-none absolute bottom-3.5 left-2.5 rounded bg-black/45 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100">
+          drag to scrub
+        </span>
+      </div>
+      {expanded ? (
+        <ClipLightbox clip={clip} t={t} onClose={() => setExpanded(false)} />
+      ) : null}
+    </>
+  );
+}
+
+// Full-screen YouTube-style player. Rendered via a portal to <body> so it escapes the
+// result page's `lg:-translate-x-1/2` ancestor (a transform breaks position:fixed).
+// Native <video controls> gives play/pause, a draggable timeline, volume, and the
+// browser's own fullscreen button — and it starts at the coached moment.
+function ClipLightbox({
+  clip,
+  t,
+  onClose,
 }: {
   clip: string;
-  poster?: string;
-  markers: Marker[];
-  videoRef: React.RefObject<HTMLVideoElement>;
+  t: number;
+  onClose: () => void;
 }) {
-  const [duration, setDuration] = useState(0);
-  const [current, setCurrent] = useState(0);
-  const pct = (t: number) =>
-    duration > 0 ? Math.min(100, Math.max(0, (t / duration) * 100)) : 0;
-  const seek = (t: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = Math.max(0, t);
-    void v.play();
-  };
-  const dotColor = (sev: string) =>
-    sev === "fix"
-      ? "bg-amber-500"
-      : sev === "strength"
-        ? "bg-emerald-500"
-        : "bg-slate-400";
-  return (
-    <div className="space-y-2">
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden"; // lock background scroll
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clip player"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close player"
+        className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+      >
+        <X size={20} />
+      </button>
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
-        ref={videoRef}
         src={clip}
-        poster={poster}
         controls
+        autoPlay
         playsInline
-        preload="metadata"
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        className="w-full rounded-2xl border border-slate-200 bg-black"
+        onClick={(e) => e.stopPropagation()}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          v.currentTime = Math.min(t, v.duration || t);
+        }}
+        className="max-h-[88vh] max-w-[92vw] rounded-lg bg-black shadow-2xl"
       />
-      {markers.length ? (
-        <div className="px-1">
-          <div
-            className="relative h-6 cursor-pointer"
-            onClick={(e) => {
-              if (duration <= 0) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              seek(((e.clientX - rect.left) / rect.width) * duration);
-            }}
-          >
-            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-slate-200" />
-            <div
-              className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-brand-400"
-              style={{ width: `${pct(current)}%` }}
-            />
-            <div
-              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-brand-600 shadow"
-              style={{ left: `${pct(current)}%` }}
-            />
-            {markers.map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                title={`${fmtTime(m.t)} — ${m.label}`}
-                aria-label={`Jump to ${fmtTime(m.t)} — ${m.label}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  seek(m.t);
-                }}
-                className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white transition hover:scale-150 ${dotColor(m.severity)}`}
-                style={{ left: `${pct(m.t)}%` }}
-              />
-            ))}
-          </div>
-          <p className="mt-1 text-center text-xs text-slate-400">
-            {markers.length} coached {markers.length === 1 ? "moment" : "moments"} —
-            tap a dot (or a read) to jump
-          </p>
-        </div>
-      ) : null}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -431,17 +524,17 @@ function TopFixes({
   fixes,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   fixes: CoachFinding[];
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <p className="font-semibold">Your top fixes</p>
-      <p className="mb-3 text-sm text-slate-600">In priority order — start at #1.</p>
+      <p className="mb-3 text-sm text-slate-600">
+        In priority order — start at #1.
+      </p>
       <div className="space-y-3">
         {fixes.map((f, i) => (
           <FixCard
@@ -450,7 +543,6 @@ function TopFixes({
             f={f}
             evidenceUrls={evidenceUrls}
             clip={clip}
-            onEvidence={onEvidence}
           />
         ))}
       </div>
@@ -463,19 +555,18 @@ function FixCard({
   f,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   n: number;
   f: CoachFinding;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   const why =
     typeof f.extra?.why_it_matters === "string"
       ? (f.extra.why_it_matters as string)
       : null;
-  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const drill =
+    typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
   const ref = f.evidence_frames[0];
   const key = ref ? `${f.component}:${ref.index}` : null;
   const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
@@ -487,39 +578,20 @@ function FixCard({
       <div className="min-w-0 flex-1">
         <p className="font-semibold">{f.observation}</p>
         {why ? <p className="mt-0.5 text-sm text-slate-600">{why}</p> : null}
-        <div className="mt-2 flex items-start gap-3">
-          {thumb ? (
-            <button
-              type="button"
-              onClick={() => ref && onEvidence(thumb, ref.timestamp_s)}
-              className="relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-amber-200"
-              aria-label="Watch this moment in your clip"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={thumb} alt="" className="h-full w-full object-cover" />
-              <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white opacity-0 transition hover:opacity-100">
-                <PlayCircle size={22} />
-              </span>
-            </button>
-          ) : null}
-          <div className="min-w-0 flex-1">
-            {drill ? (
-              <p className="rounded-lg bg-white/70 p-2 text-sm">
-                <span className="font-semibold">Drill: </span>
-                {drill}
-              </p>
-            ) : null}
-            {ref && clip ? (
-              <button
-                type="button"
-                onClick={() => onEvidence(thumb, ref.timestamp_s)}
-                className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
-              >
-                <PlayCircle size={14} /> Watch this moment
-              </button>
-            ) : null}
-          </div>
-        </div>
+        {ref ? (
+          <ClipViewer
+            clip={clip}
+            t={ref.timestamp_s}
+            poster={thumb}
+            className="mt-2"
+          />
+        ) : null}
+        {drill ? (
+          <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
+            <span className="font-semibold">Drill: </span>
+            {drill}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -530,13 +602,11 @@ function WhatElse({
   notes,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   strengths: CoachFinding[];
   notes: CoachFinding[];
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   const row = (f: CoachFinding, tone: string, dot: string) => {
     const ref = f.evidence_frames[0];
@@ -548,16 +618,15 @@ function WhatElse({
         className={`flex items-start gap-2 rounded-lg border p-3 ${tone}`}
       >
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot}`} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm">{f.observation}</p>
-          {ref && clip ? (
-            <button
-              type="button"
-              onClick={() => onEvidence(thumb, ref.timestamp_s)}
-              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline"
-            >
-              <PlayCircle size={12} /> Watch this moment
-            </button>
+          {ref ? (
+            <ClipViewer
+              clip={clip}
+              t={ref.timestamp_s}
+              poster={thumb}
+              className="mt-2 max-w-xs"
+            />
           ) : null}
         </div>
       </div>
@@ -565,10 +634,16 @@ function WhatElse({
   };
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="mb-2 font-semibold">What&apos;s working &amp; worth noting</p>
+      <p className="mb-2 font-semibold">
+        What&apos;s working &amp; worth noting
+      </p>
       <div className="space-y-2">
-        {strengths.map((f) => row(f, "border-emerald-200 bg-emerald-50", "bg-emerald-500"))}
-        {notes.map((f) => row(f, "border-slate-200 bg-slate-50", "bg-slate-400"))}
+        {strengths.map((f) =>
+          row(f, "border-emerald-200 bg-emerald-50", "bg-emerald-500"),
+        )}
+        {notes.map((f) =>
+          row(f, "border-slate-200 bg-slate-50", "bg-slate-400"),
+        )}
       </div>
     </section>
   );
@@ -581,7 +656,6 @@ function StrokeByStroke({
   hedged,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   cycles: Cycle[];
   openId: number | null;
@@ -589,7 +663,6 @@ function StrokeByStroke({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -599,7 +672,10 @@ function StrokeByStroke({
         onClick={() => setShow((s) => !s)}
         className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline"
       >
-        <ChevronDown size={16} className={`transition ${show ? "rotate-180" : ""}`} />
+        <ChevronDown
+          size={16}
+          className={`transition ${show ? "rotate-180" : ""}`}
+        />
         {show ? "Hide stroke-by-stroke evidence" : "See it stroke by stroke"}
       </button>
       {show ? (
@@ -611,7 +687,6 @@ function StrokeByStroke({
             hedged={hedged}
             evidenceUrls={evidenceUrls}
             clip={clip}
-            onEvidence={onEvidence}
           />
         </div>
       ) : null}
@@ -626,7 +701,6 @@ function CycleSpine({
   hedged,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   cycles: Cycle[];
   openId: number | null;
@@ -634,7 +708,6 @@ function CycleSpine({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   const open = cycles.find((c) => c.id === openId) ?? null;
   return (
@@ -679,10 +752,16 @@ function CycleSpine({
               </span>
               <span className="absolute inset-x-1.5 bottom-1 flex items-center justify-between text-[10px] font-medium text-white">
                 <span className="drop-shadow-sm">
-                  {c.coachedCount ? `${c.coachedCount} read${c.coachedCount > 1 ? "s" : ""}` : "no read yet"}
+                  {c.coachedCount
+                    ? `${c.coachedCount} read${c.coachedCount > 1 ? "s" : ""}`
+                    : "no read yet"}
                 </span>
                 {c.coachedCount ? (
-                  <Check size={11} strokeWidth={3} className="text-emerald-300" />
+                  <Check
+                    size={11}
+                    strokeWidth={3}
+                    className="text-emerald-300"
+                  />
                 ) : null}
               </span>
             </button>
@@ -691,12 +770,7 @@ function CycleSpine({
       </div>
 
       {open ? (
-        <CycleDetail
-          cycle={open}
-          evidenceUrls={evidenceUrls}
-          clip={clip}
-          onEvidence={onEvidence}
-        />
+        <CycleDetail cycle={open} evidenceUrls={evidenceUrls} clip={clip} />
       ) : (
         <p className="mt-3 text-sm text-slate-500">
           Tap a cycle above to see what the camera caught in it.
@@ -710,12 +784,10 @@ function CycleDetail({
   cycle,
   evidenceUrls,
   clip,
-  onEvidence,
 }: {
   cycle: Cycle;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onEvidence: (frame: string | undefined, t: number) => void;
 }) {
   const reads = cycle.subReads.filter((s) => s.finding);
   return (
@@ -733,7 +805,6 @@ function CycleDetail({
               evidenceUrls={evidenceUrls}
               shareUrls={null}
               clip={clip}
-              onEvidence={onEvidence}
             />
           ))}
         </div>
@@ -752,21 +823,20 @@ function FindingCard({
   evidenceUrls,
   shareUrls,
   clip,
-  onEvidence,
 }: {
   f: CoachFinding;
   label?: string;
   evidenceUrls: Record<string, string> | null;
   shareUrls: Record<string, string> | null;
   clip?: string | null;
-  onEvidence?: (frame: string | undefined, t: number) => void;
 }) {
   const sev = SEV[f.severity] ?? SEV.info;
   const why =
     typeof f.extra?.why_it_matters === "string"
       ? (f.extra.why_it_matters as string)
       : null;
-  const drill = typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const drill =
+    typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
   const ref = f.evidence_frames[0];
   const key = ref ? `${f.component}:${ref.index}` : null;
   const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
@@ -780,66 +850,47 @@ function FindingCard({
         </p>
       ) : null}
       <div className="mb-1 flex items-center gap-2">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${sev.pill}`}
+        >
           {sev.label}
         </span>
         {ref ? (
-          <span className="text-xs text-slate-600">t={ref.timestamp_s.toFixed(1)}s</span>
+          <span className="text-xs text-slate-600">
+            t={ref.timestamp_s.toFixed(1)}s
+          </span>
         ) : null}
       </div>
-      <div className="flex items-start gap-3">
-        {thumb ? (
-          <button
-            type="button"
-            onClick={() => ref && onEvidence?.(thumb, ref.timestamp_s)}
-            className="relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-slate-200"
-            aria-label="View this moment in your clip"
+      <p className="font-medium">{f.observation}</p>
+      {why ? <p className="mt-1 text-sm text-slate-600">{why}</p> : null}
+      {ref ? (
+        <ClipViewer
+          clip={clip ?? null}
+          t={ref.timestamp_s}
+          poster={thumb}
+          className="mt-2 max-w-sm"
+        />
+      ) : null}
+      {drill ? (
+        <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
+          <span className="font-semibold">Drill: </span>
+          {drill}
+        </p>
+      ) : null}
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+        {share ? (
+          <a
+            href={share}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={thumb}
-              alt="Evidence frame from your clip"
-              className="h-full w-full object-cover"
-            />
-            <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white opacity-0 transition hover:opacity-100">
-              <PlayCircle size={22} />
-            </span>
-          </button>
+            <Share2 size={13} /> Share this card
+          </a>
         ) : null}
-        <div className="min-w-0 flex-1">
-          <p className="font-medium">{f.observation}</p>
-          {why ? <p className="mt-1 text-sm text-slate-600">{why}</p> : null}
-          {drill ? (
-            <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
-              <span className="font-semibold">Drill: </span>
-              {drill}
-            </p>
-          ) : null}
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-            {ref && clip && onEvidence ? (
-              <button
-                type="button"
-                onClick={() => onEvidence(thumb, ref.timestamp_s)}
-                className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"
-              >
-                <PlayCircle size={13} /> Watch this moment
-              </button>
-            ) : null}
-            {share ? (
-              <a
-                href={share}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline"
-              >
-                <Share2 size={13} /> Share this card
-              </a>
-            ) : null}
-            {lowConf ? (
-              <span className="text-slate-600">low-confidence read</span>
-            ) : null}
-          </div>
-        </div>
+        {lowConf ? (
+          <span className="text-slate-600">low-confidence read</span>
+        ) : null}
       </div>
     </div>
   );
@@ -858,10 +909,18 @@ function ViewSelector({
       : "rounded-md px-3 py-1 text-slate-500";
   return (
     <div className="mt-3 inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
-      <button type="button" onClick={() => setView("above")} className={tab(view === "above")}>
+      <button
+        type="button"
+        onClick={() => setView("above")}
+        className={tab(view === "above")}
+      >
         Above water
       </button>
-      <button type="button" onClick={() => setView("under")} className={tab(view === "under")}>
+      <button
+        type="button"
+        onClick={() => setView("under")}
+        className={tab(view === "under")}
+      >
         Underwater
       </button>
     </div>
@@ -887,8 +946,9 @@ function CantSeeStrip() {
       </div>
       <p className="text-sm text-slate-600">
         Your <span className="font-medium">catch &amp; pull</span> and your{" "}
-        <span className="font-medium">kick</span> happen below the surface in every
-        stroke — a coach in the pool sees what an above-water, side-on clip can&apos;t.
+        <span className="font-medium">kick</span> happen below the surface in
+        every stroke — a coach in the pool sees what an above-water, side-on
+        clip can&apos;t.
       </p>
       <a
         href="https://swimbuddz.com/academy"
