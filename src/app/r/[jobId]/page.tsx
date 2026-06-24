@@ -157,6 +157,8 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
   },
 };
 
+type Marker = { t: number; severity: string; label: string; key: string };
+
 function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
@@ -231,6 +233,20 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
     }
     return undefined;
   })();
+  // Coached moments → markers on the scrubber. (Borderline clips have their evidence
+  // frames stripped by the backend honesty pass, so there are simply no markers.)
+  const markers: Marker[] = [];
+  for (const f of [...verdict.fixes, ...verdict.strengths, ...verdict.notes]) {
+    const ref = f.evidence_frames[0];
+    if (ref)
+      markers.push({
+        t: ref.timestamp_s,
+        severity: f.severity,
+        label: f.observation,
+        key: `${f.component}:${ref.index}`,
+      });
+  }
+  markers.sort((a, b) => a.t - b.t);
 
   return (
     <div className="space-y-6">
@@ -310,14 +326,11 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
 
           <div className="mt-6 space-y-4 lg:mt-0 lg:sticky lg:top-6">
             {clip ? (
-              <video
-                ref={videoRef}
-                src={clip}
-                controls
-                playsInline
-                preload="none"
+              <VideoScrubber
+                clip={clip}
                 poster={poster}
-                className="w-full rounded-2xl border border-slate-200 bg-black"
+                markers={markers}
+                videoRef={videoRef}
               />
             ) : null}
             <BuyMore />
@@ -326,6 +339,90 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
       )}
 
       <AcademyCTA />
+    </div>
+  );
+}
+
+function VideoScrubber({
+  clip,
+  poster,
+  markers,
+  videoRef,
+}: {
+  clip: string;
+  poster?: string;
+  markers: Marker[];
+  videoRef: React.RefObject<HTMLVideoElement>;
+}) {
+  const [duration, setDuration] = useState(0);
+  const [current, setCurrent] = useState(0);
+  const pct = (t: number) =>
+    duration > 0 ? Math.min(100, Math.max(0, (t / duration) * 100)) : 0;
+  const seek = (t: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, t);
+    void v.play();
+  };
+  const dotColor = (sev: string) =>
+    sev === "fix"
+      ? "bg-amber-500"
+      : sev === "strength"
+        ? "bg-emerald-500"
+        : "bg-slate-400";
+  return (
+    <div className="space-y-2">
+      <video
+        ref={videoRef}
+        src={clip}
+        poster={poster}
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+        className="w-full rounded-2xl border border-slate-200 bg-black"
+      />
+      {markers.length ? (
+        <div className="px-1">
+          <div
+            className="relative h-6 cursor-pointer"
+            onClick={(e) => {
+              if (duration <= 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              seek(((e.clientX - rect.left) / rect.width) * duration);
+            }}
+          >
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-slate-200" />
+            <div
+              className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-brand-400"
+              style={{ width: `${pct(current)}%` }}
+            />
+            <div
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-brand-600 shadow"
+              style={{ left: `${pct(current)}%` }}
+            />
+            {markers.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                title={`${fmtTime(m.t)} — ${m.label}`}
+                aria-label={`Jump to ${fmtTime(m.t)} — ${m.label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  seek(m.t);
+                }}
+                className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white transition hover:scale-150 ${dotColor(m.severity)}`}
+                style={{ left: `${pct(m.t)}%` }}
+              />
+            ))}
+          </div>
+          <p className="mt-1 text-center text-xs text-slate-400">
+            {markers.length} coached {markers.length === 1 ? "moment" : "moments"} —
+            tap a dot (or a read) to jump
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
