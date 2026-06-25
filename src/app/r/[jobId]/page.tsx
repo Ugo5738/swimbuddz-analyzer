@@ -31,6 +31,7 @@ import {
   fmtTime,
   getPublicAnalysis,
   GUMROAD_CHECKOUT_BASE,
+  isSystemFailure,
   PRODUCTS,
   type PublicAnalysisJobDetail,
 } from "@/lib/publicAnalyzer";
@@ -1009,25 +1010,32 @@ function CantSeeStrip() {
 }
 
 function RefusalCard({ reason }: { reason: string | null }) {
+  // A system hiccup (capacity/our end) is NOT a clip problem — don't show filming
+  // tips, lead with "try again". A clip/angle refusal keeps the how-to-film help.
+  const onUs = isSystemFailure(reason);
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
       <h2 className="text-lg font-bold">
-        We couldn&apos;t coach this clip well — and we won&apos;t guess.
+        {onUs
+          ? "That one's on us — give it another go."
+          : "We couldn't coach this clip well — and we won't guess."}
       </h2>
       <p className="mt-2 text-sm text-slate-600">{failureMessage(reason)}</p>
-      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm">
-        <p className="mb-1 font-medium">How to film a clip we can read:</p>
-        <ul className="list-disc space-y-1 pl-5 text-slate-600">
-          <li>Side-on, level with the swimmer</li>
-          <li>Camera at or just above the waterline</li>
-          <li>One swimmer clearly in frame</li>
-        </ul>
-      </div>
+      {onUs ? null : (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+          <p className="mb-1 font-medium">How to film a clip we can read:</p>
+          <ul className="list-disc space-y-1 pl-5 text-slate-600">
+            <li>Side-on, level with the swimmer</li>
+            <li>Camera at or just above the waterline</li>
+            <li>One swimmer clearly in frame</li>
+          </ul>
+        </div>
+      )}
       <Link
         href="/"
         className="mt-4 inline-block rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700"
       >
-        Try another clip
+        {onUs ? "Try again" : "Try another clip"}
       </Link>
     </div>
   );

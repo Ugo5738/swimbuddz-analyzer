@@ -5,7 +5,11 @@
 import { API_BASE_URL } from "./config";
 
 // ─── Types ────────────────────────────────────────────────────────────
-export type AnalysisJobStatus = "pending" | "processing" | "completed" | "failed";
+export type AnalysisJobStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed";
 
 // The swimmer's goal. Steers how the coach prioritises + frames feedback (a long
 // front-quad glide is efficiency for distance, a dead-spot for sprint), never what
@@ -31,7 +35,11 @@ export type Observation = {
   drill: DrillSuggestion | null;
 };
 
-export type TrackingGap = { start_s: number; end_s: number; duration_s: number };
+export type TrackingGap = {
+  start_s: number;
+  end_s: number;
+  duration_s: number;
+};
 
 // ── VLM-coach result (the new pipeline; mirrors the backend PipelineResult) ──
 export type CoachFinding = {
@@ -138,7 +146,13 @@ export const ACCEPTED_VIDEO_MIME =
 export const PRODUCTS = [
   { permalink: "vrjec", credits: 1, priceUsd: 6, label: "Single" },
   { permalink: "fgopu", credits: 3, priceUsd: 12, label: "Starter" },
-  { permalink: "puxlbz", credits: 10, priceUsd: 29, label: "Popular", featured: true },
+  {
+    permalink: "puxlbz",
+    credits: 10,
+    priceUsd: 29,
+    label: "Popular",
+    featured: true,
+  },
   { permalink: "arlum", credits: 25, priceUsd: 59, label: "Coach" },
 ] as const;
 
@@ -278,9 +292,12 @@ export async function redeemLicense(
 
 // ─── UI helpers ───────────────────────────────────────────────────────
 export function statusLabel(status: AnalysisJobStatus): string {
-  return { pending: "Queued", processing: "Analyzing", completed: "Ready", failed: "Failed" }[
-    status
-  ];
+  return {
+    pending: "Queued",
+    processing: "Analyzing",
+    completed: "Ready",
+    failed: "Failed",
+  }[status];
 }
 
 export function readVideoDuration(file: File): Promise<number> {
@@ -307,6 +324,18 @@ export function fmtTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+// System failures — "on us", not the swimmer's clip. The UI hides filming tips for
+// these and leads with a retry (it's worth trying again; the clip was fine).
+export const SYSTEM_FAILURE_REASONS = new Set([
+  "temporarily_unavailable",
+  "coach_unavailable",
+  "analysis_error",
+]);
+
+export function isSystemFailure(reason: string | null): boolean {
+  return reason != null && SYSTEM_FAILURE_REASONS.has(reason);
+}
+
 // Map a backend failure_reason / error_message to friendly copy.
 export function failureMessage(reason: string | null): string {
   switch (reason) {
@@ -316,6 +345,12 @@ export function failureMessage(reason: string | null): string {
       return "We couldn't read that video file. Try exporting it as MP4 and re-uploading — your credit was refunded.";
     case "could_not_track":
       return "We couldn't track a swimmer in that clip. Use a side-on view with the swimmer clearly in frame — your credit was refunded.";
+    case "temporarily_unavailable":
+      return "We got a rush of clips and couldn't finish yours in time — that's on us, not your clip. Your credit's refunded; give it a minute and try again.";
+    case "coach_unavailable":
+      return "Our coach is briefly unavailable — on our end, not your clip. Your credit's refunded; please try again shortly.";
+    case "analysis_error":
+      return "Something went wrong on our end analyzing that clip — your credit's refunded. Please try again.";
     default:
       return "We couldn't analyze that clip — your credit was refunded. Try a clearer, side-on freestyle clip.";
   }
