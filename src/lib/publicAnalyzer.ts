@@ -236,6 +236,20 @@ export async function getPublicAnalysis(
   return (await resp.json()) as PublicAnalysisJobDetail;
 }
 
+// Re-run a FAILED analysis on its stored clip — free (the credit was refunded on
+// failure). The job flips back to pending; keep polling getPublicAnalysis.
+export async function retryPublicAnalysis(
+  jobId: string,
+  guestToken: string,
+): Promise<{ status: string }> {
+  const resp = await fetch(
+    `${API_BASE_URL}/api/v1/ai/public/analyze/${jobId}/retry?guest_token=${encodeURIComponent(guestToken)}`,
+    { method: "POST", cache: "no-store" },
+  );
+  if (!resp.ok) throw await toError(resp);
+  return (await resp.json()) as { status: string };
+}
+
 export type InspectResponse = {
   status: "ready" | "inspecting";
   finding?: CoachFinding;

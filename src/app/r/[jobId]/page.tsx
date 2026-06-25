@@ -34,6 +34,7 @@ import {
   isSystemFailure,
   PRODUCTS,
   type PublicAnalysisJobDetail,
+  retryPublicAnalysis,
 } from "@/lib/publicAnalyzer";
 import {
   buildCycles,
@@ -108,6 +109,18 @@ function ResultInner() {
     };
   }, [poll]);
 
+  // One-click retry of a FAILED job (re-run on the stored clip, free). Throws on
+  // failure so the button can fall back to "upload again"; on success we re-poll
+  // and the job flips back to analyzing.
+  const onRetry = useCallback(async () => {
+    if (!token) return;
+    await retryPublicAnalysis(jobId, token);
+    setError("");
+    setDetail(null);
+    setLoading(true);
+    void poll();
+  }, [jobId, token, poll]);
+
   return (
     // Mobile stays in the shared max-w-3xl column; on desktop the result page
     // breaks out wider (centred in the viewport, scrollbar-safe via 92vw) so the
@@ -138,7 +151,7 @@ function ResultInner() {
           </p>
         </Centered>
       ) : detail ? (
-        <ResultBody detail={detail} />
+        <ResultBody detail={detail} onRetry={onRetry} />
       ) : null}
     </div>
   );
@@ -168,7 +181,13 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
   },
 };
 
-function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
+function ResultBody({
+  detail,
+  onRetry,
+}: {
+  detail: PublicAnalysisJobDetail;
+  onRetry?: () => Promise<void>;
+}) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
   const cycles = useMemo(() => buildCycles(detail), [detail]);
@@ -201,7 +220,7 @@ function ResultBody({ detail }: { detail: PublicAnalysisJobDetail }) {
   }
 
   if (detail.status === "failed" || coach?.refused) {
-    return <RefusalCard reason={detail.error_message} />;
+    return <RefusalCard reason={detail.error_message} onRetry={onRetry} />;
   }
 
   const findings = coach
@@ -1009,10 +1028,31 @@ function CantSeeStrip() {
   );
 }
 
-function RefusalCard({ reason }: { reason: string | null }) {
+function RefusalCard({
+  reason,
+  onRetry,
+}: {
+  reason: string | null;
+  onRetry?: () => Promise<void>;
+}) {
   // A system hiccup (capacity/our end) is NOT a clip problem — don't show filming
-  // tips, lead with "try again". A clip/angle refusal keeps the how-to-film help.
+  // tips, offer a one-click re-run (free). A clip/angle refusal keeps the how-to-film
+  // help + a re-upload link (re-running the same bad clip won't help).
   const onUs = isSystemFailure(reason);
+  const [retrying, setRetrying] = useState(false);
+  const [retryFailed, setRetryFailed] = useState(false);
+  const handleRetry = async () => {
+    if (!onRetry) return;
+    setRetrying(true);
+    setRetryFailed(false);
+    try {
+      await onRetry();
+    } catch {
+      setRetryFailed(true); // fall back to "upload again"
+      setRetrying(false);
+    }
+  };
+  const canRetry = onUs && onRetry && !retryFailed;
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
       <h2 className="text-lg font-bold">
@@ -1031,12 +1071,34 @@ function RefusalCard({ reason }: { reason: string | null }) {
           </ul>
         </div>
       )}
-      <Link
-        href="/"
-        className="mt-4 inline-block rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700"
-      >
-        {onUs ? "Try again" : "Try another clip"}
-      </Link>
+      {canRetry ? (
+        <button
+          type="button"
+          onClick={handleRetry}
+          disabled={retrying}
+          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+        >
+          {retrying ? (
+            <>
+              <Loader2 className="animate-spin" size={16} /> Re-running…
+            </>
+          ) : (
+            "Try again"
+          )}
+        </button>
+      ) : (
+        <Link
+          href="/"
+          className="mt-4 inline-block rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700"
+        >
+          {onUs ? "Upload again" : "Try another clip"}
+        </Link>
+      )}
+      {retryFailed ? (
+        <p className="mt-2 text-xs text-slate-500">
+          Couldn&apos;t re-run automatically — please upload your clip again.
+        </p>
+      ) : null}
     </div>
   );
 }
