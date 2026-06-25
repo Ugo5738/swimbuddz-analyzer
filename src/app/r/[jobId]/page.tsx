@@ -7,7 +7,7 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
-  GraduationCap,
+  Info,
   Loader2,
   Maximize2,
   Share2,
@@ -328,7 +328,7 @@ function ResultBody({
         </div>
       )}
 
-      <AcademyCTA />
+      <AutomatedCheckNote />
     </div>
   );
 }
@@ -1013,17 +1013,9 @@ function CantSeeStrip() {
       <p className="text-sm text-slate-600">
         Your <span className="font-medium">catch &amp; pull</span> and your{" "}
         <span className="font-medium">kick</span> happen below the surface in
-        every stroke — a coach in the pool sees what an above-water, side-on
-        clip can&apos;t.
+        every stroke — an above-water, side-on clip can&apos;t read them. An
+        underwater camera or a coach watching poolside is the way to see these.
       </p>
-      <a
-        href="https://swimbuddz.com/academy"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
-      >
-        <GraduationCap size={15} /> Get eyes underwater → SwimBuddz Academy
-      </a>
     </div>
   );
 }
@@ -1164,25 +1156,17 @@ function BuyMore() {
   );
 }
 
-function AcademyCTA() {
+function AutomatedCheckNote() {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-brand-100 bg-brand-50 p-5">
-      <GraduationCap size={28} className="shrink-0 text-brand-600" />
-      <p className="text-sm text-brand-800">
-        <span className="font-semibold">
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <Info size={22} className="shrink-0 text-slate-400" />
+      <p className="text-sm text-slate-600">
+        <span className="font-semibold text-slate-700">
           This is an automated check, not a human coach.
         </span>{" "}
-        For eyes-on, personalised coaching — including the bits the camera
-        can&apos;t see — come swim with{" "}
-        <a
-          href="https://swimbuddz.com/academy"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-semibold underline"
-        >
-          SwimBuddz Academy
-        </a>
-        .
+        It reads what an above-water, side-on clip shows — for the underwater
+        parts and eyes-on feedback, a qualified swim coach is still the gold
+        standard.
       </p>
     </div>
   );
