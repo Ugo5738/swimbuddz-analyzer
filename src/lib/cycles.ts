@@ -112,11 +112,12 @@ export function isNoiseFinding(f: CoachFinding): boolean {
   return NOISE_RE.test(f.observation ?? "");
 }
 
-// Continuous (every-stroke) faults — stated ONCE as a stroke-wide habit, never
-// pinned to a single cycle. Recovery-elbow is the one aspect that genuinely
-// varies stroke to stroke, so its story is the across-strokes fatigue read
-// (area "consistency"), not a per-cycle fix.
-const CONTINUOUS = new Set(["body_line", "head_breath", "entry_reach"]);
+// A per-cycle recovery fix belongs in the stroke-by-stroke lens, never the top
+// verdict — it's one stroke, not a stroke-wide habit. Everything else the coach
+// flags as a "fix" — including the holistic read, whose findings carry NO area —
+// is a top-line fault and must surface.
+const isPerCycleRecovery = (f: CoachFinding): boolean =>
+  f.area === "recovery_elbow" && typeof f.instance_id === "number";
 
 export type Verdict = {
   fixes: CoachFinding[]; // ranked top fixes — the page's spine
@@ -148,11 +149,14 @@ export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
     .filter((f) => f.component !== "gate" && f.component !== "collate")
     .filter((f) => !isNoiseFinding(f));
 
-  const dedupeByArea = (list: CoachFinding[]): CoachFinding[] => {
+  // Dedupe: aspect findings collapse by their area (one entry/head/body-line
+  // read). The holistic coach emits SEVERAL distinct points with no area, so
+  // those key on their own text and are never collapsed into a single entry.
+  const dedupe = (list: CoachFinding[]): CoachFinding[] => {
     const seen = new Set<string>();
     const out: CoachFinding[] = [];
     for (const f of list) {
-      const k = f.area ?? f.component;
+      const k = f.area ?? f.observation;
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(f);
@@ -161,24 +165,27 @@ export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
   };
 
   const sorted = [...findings].sort((a, b) => rankOf(a) - rankOf(b));
-  const fixes = dedupeByArea(
-    sorted.filter(
-      (f) =>
-        f.severity === "fix" &&
-        (CONTINUOUS.has(f.area ?? "") || f.area === "consistency"),
-    ),
+  // Top fixes = every coached fault EXCEPT per-cycle recovery (which lives in the
+  // stroke-by-stroke lens below). The holistic coach's fixes carry no area, so an
+  // area-gated filter silently drops them — select by severity alone.
+  const fixes = dedupe(
+    sorted.filter((f) => f.severity === "fix" && !isPerCycleRecovery(f)),
   );
   // Pull can't-see reads OUT of strengths/notes into their own bucket so the UI can
   // show them apart from real coaching (a camera limit isn't a strength OR a fault).
-  const strengths = dedupeByArea(
+  const strengths = dedupe(
     sorted.filter((f) => f.severity === "strength" && !isCantSee(f)),
   );
-  const notes = dedupeByArea(
+  const notes = dedupe(
     sorted.filter(
-      (f) => f.severity === "info" && f.area !== "consistency" && !isCantSee(f),
+      (f) =>
+        f.severity === "info" &&
+        f.area !== "consistency" &&
+        !isCantSee(f) &&
+        !isPerCycleRecovery(f),
     ),
   );
-  const cantSee = dedupeByArea(
+  const cantSee = dedupe(
     sorted.filter((f) => f.severity !== "fix" && isCantSee(f)),
   );
   return { fixes, strengths, notes, cantSee };
