@@ -59,6 +59,7 @@ export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
   for (const f of findings) {
     if (f.area !== "recovery_elbow" || typeof f.instance_id !== "number")
       continue;
+    if (isNoiseFinding(f)) continue;
     const ci = cycles.findIndex((c) => c.id === f.instance_id);
     if (ci < 0) continue;
     if (!cycles[ci].subReads[recoverySlot].finding) {
@@ -102,6 +103,15 @@ export function defaultOpenCycle(cycles: Cycle[]): number | null {
 export const rankOf = (f: CoachFinding): number =>
   typeof f.extra?.rank === "number" ? (f.extra.rank as number) : 9;
 
+// Placeholder / raw-debug findings that must never surface to a user: an
+// uncoached instance label ("Recovery #3"), a raw aspect verdict echoed back
+// ("entry_reach: unclear"), or an empty observation. These leak from
+// low-confidence or unvalidated coaches and read as meaningless noise.
+const NOISE_RE = /^\s*$|^recovery\s*#\d+\s*$|^[a-z_]+:\s*(unclear|none|n\/?a)\s*$/i;
+export function isNoiseFinding(f: CoachFinding): boolean {
+  return NOISE_RE.test(f.observation ?? "");
+}
+
 // Continuous (every-stroke) faults — stated ONCE as a stroke-wide habit, never
 // pinned to a single cycle. Recovery-elbow is the one aspect that genuinely
 // varies stroke to stroke, so its story is the across-strokes fatigue read
@@ -135,7 +145,8 @@ function isCantSee(f: CoachFinding): boolean {
 export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
   const findings = (detail.result?.coach_result?.results ?? [])
     .flatMap((c) => c.findings)
-    .filter((f) => f.component !== "gate" && f.component !== "collate");
+    .filter((f) => f.component !== "gate" && f.component !== "collate")
+    .filter((f) => !isNoiseFinding(f));
 
   const dedupeByArea = (list: CoachFinding[]): CoachFinding[] => {
     const seen = new Set<string>();

@@ -10,6 +10,8 @@ import {
   Info,
   Loader2,
   Maximize2,
+  Pause,
+  Play,
   Share2,
   X,
 } from "lucide-react";
@@ -181,6 +183,53 @@ const SEV: Record<string, { label: string; tone: string; pill: string }> = {
   },
 };
 
+// Compact one-click re-run (free) for a partial/failed-mid-way read. Falls back
+// to "upload again" if the re-run itself errors.
+function RetryInline({
+  onRetry,
+  label = "Re-run free",
+}: {
+  onRetry: () => Promise<void>;
+  label?: string;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <Link
+        href="/"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        <ArrowLeft size={14} /> Upload again
+      </Link>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        setRetrying(true);
+        try {
+          await onRetry();
+        } catch {
+          setFailed(true);
+          setRetrying(false);
+        }
+      }}
+      disabled={retrying}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+    >
+      {retrying ? (
+        <>
+          <Loader2 className="animate-spin" size={14} /> Re-running…
+        </>
+      ) : (
+        label
+      )}
+    </button>
+  );
+}
+
 function ResultBody({
   detail,
   onRetry,
@@ -242,6 +291,10 @@ function ResultBody({
     ? buildVerdict(detail)
     : { fixes: [], strengths: [], notes: [], cantSee: [] };
   const topFix = verdict.fixes[0]?.observation ?? null;
+  // A coach component that errored (e.g. the holistic read hit a rate limit) means
+  // the read is PARTIAL — never present that as a clean "nothing to fix".
+  const coachErrored =
+    coach?.results.some((c) => c.component !== "gate" && c.error) ?? false;
 
   return (
     <div className="space-y-6">
@@ -271,6 +324,15 @@ function ResultBody({
             sharper feedback.
           </p>
         ) : null}
+        {coachErrored && !isWorking ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <span className="min-w-[12rem] flex-1">
+              Part of the read didn&apos;t finish this time (we hit a temporary
+              limit). Re-running is free and usually returns the full coaching.
+            </span>
+            {onRetry ? <RetryInline onRetry={onRetry} /> : null}
+          </div>
+        ) : null}
         {coach ? <ViewSelector view={view} setView={setView} /> : null}
       </div>
 
@@ -289,10 +351,17 @@ function ResultBody({
                 evidenceUrls={evidenceUrls}
                 clip={clip}
               />
+            ) : coachErrored ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                We couldn&apos;t finish the full read this time — what we did
+                surface is below. Re-run (free) for the complete coaching.
+              </div>
             ) : (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-                Nothing major to fix in what we can see — your visible basics
-                look solid. Try another angle or session to go deeper.
+                No clear faults in what this clip shows — your visible basics
+                look solid. This is an automated read of the above-water stroke
+                from this angle, so it&apos;s a limited view: film a truer
+                side-on clip or a fresh session to go deeper.
               </div>
             )}
 
@@ -333,16 +402,145 @@ function ResultBody({
   );
 }
 
-// Per-clip viewer — a REAL (native) video player inside the coach card, so it behaves
-// exactly like YouTube: click the body to play/pause, drag the SEEK BAR (only the bar)
-// to scrub, native volume + fullscreen. It opens paused on the coached moment.
-//   • expand (⤢): full-screen player looped to the selected moment (the chunk).
+// A chunk-scoped player — the coached MOMENT cut out of the full clip, NOT the
+// whole video timestamped. The seek line spans only [t-half, t+half] (~4s), the
+// time reads that window (e.g. 0:12 / 0:16), and playback loops inside it. Native
+// <video controls> always shows the full duration, so we build YouTube-style
+// controls ourselves: click the body to play/pause, drag the SEEK LINE (only the
+// line) to scrub. The whole swim stays in the top-right player.
+function ChunkPlayer({
+  clip,
+  t,
+  half = 2,
+  poster,
+  autoPlay = false,
+  className = "",
+  videoClassName = "block h-auto w-full",
+}: {
+  clip: string;
+  t: number;
+  half?: number;
+  poster?: string;
+  autoPlay?: boolean;
+  className?: string;
+  videoClassName?: string;
+}) {
+  const vref = useRef<HTMLVideoElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [win, setWin] = useState({
+    start: Math.max(0, t - half),
+    end: t + half,
+  });
+  const [cur, setCur] = useState(win.start);
+  const dur = Math.max(0.1, win.end - win.start);
+  const frac = Math.max(0, Math.min(1, (cur - win.start) / dur));
+
+  const seekToClientX = (clientX: number) => {
+    const v = vref.current;
+    const bar = barRef.current;
+    if (!v || !bar) return;
+    const rect = bar.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const nt = win.start + f * dur;
+    v.currentTime = nt;
+    setCur(nt);
+  };
+
+  const toggle = () => {
+    const v = vref.current;
+    if (!v) return;
+    if (v.paused) {
+      if (v.currentTime < win.start || v.currentTime >= win.end - 0.03)
+        v.currentTime = win.start;
+      void v.play();
+    } else {
+      v.pause();
+    }
+  };
+
+  return (
+    <div className={`group relative overflow-hidden bg-black ${className}`}>
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        ref={vref}
+        src={clip}
+        poster={poster}
+        playsInline
+        autoPlay={autoPlay}
+        preload="metadata"
+        onClick={toggle}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          const start = Math.max(0, t - half);
+          const end = Math.min(v.duration || t + half, t + half);
+          setWin({ start, end });
+          v.currentTime = start;
+          setCur(start);
+        }}
+        onTimeUpdate={(e) => {
+          const v = e.currentTarget;
+          if (v.currentTime >= win.end) v.currentTime = win.start; // loop the chunk
+          setCur(v.currentTime);
+        }}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        className={`cursor-pointer ${videoClassName}`}
+      />
+      {/* control bar: play/pause · draggable seek LINE · chunk-window time */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-5">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pause" : "Play"}
+          className="pointer-events-auto text-white/90 transition hover:text-white"
+        >
+          {playing ? <Pause size={16} /> : <Play size={16} />}
+        </button>
+        <div
+          ref={barRef}
+          role="slider"
+          aria-label="Seek within the coached moment"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(frac * 100)}
+          tabIndex={0}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            seekToClientX(e.clientX);
+          }}
+          onPointerMove={(e) => {
+            if (e.buttons === 1) seekToClientX(e.clientX);
+          }}
+          className="pointer-events-auto relative h-3 flex-1 cursor-pointer"
+        >
+          <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/30" />
+          <div
+            className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white"
+            style={{ width: `${frac * 100}%` }}
+          />
+          <div
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow"
+            style={{ left: `${frac * 100}%` }}
+          />
+        </div>
+        <span className="pointer-events-none tabular-nums text-[11px] font-medium text-white">
+          {fmtTime(cur)} / {fmtTime(win.end)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Per-clip viewer in a coach card: shows the coached MOMENT (a ~4s chunk), not the
+// full clip timestamped.
+//   • expand (⤢): same moment full-screen (with a "play full clip" escape hatch).
 //   • hide (◎): collapses THIS clip (only this one) to a one-line "Show clip" stub.
 function ClipViewer({
   clip,
   t,
   poster,
-  half = 1.25,
+  half = 2,
   className = "",
 }: {
   clip: string | null;
@@ -380,31 +578,19 @@ function ClipViewer({
 
   return (
     <>
-      <div
-        className={`group relative overflow-hidden rounded-lg border border-slate-200 bg-black ${className}`}
-      >
-        {/* Native player: the browser's own controls. The seek bar is the ONLY thing
-            that scrubs (drag the line); the body just plays/pauses — exactly YouTube. */}
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video
-          src={clip}
+      <div className={`relative ${className}`}>
+        <ChunkPlayer
+          clip={clip}
+          t={t}
+          half={half}
           poster={poster}
-          controls
-          playsInline
-          preload="metadata"
-          onLoadedMetadata={(e) => {
-            // open paused on the coached moment
-            const v = e.currentTarget;
-            v.currentTime = Math.min(t, v.duration || t);
-          }}
-          className="block h-auto w-full"
+          className="rounded-lg border border-slate-200"
         />
-        {/* overlay controls — top-right, clear of the native bar (which sits bottom) */}
-        <div className="absolute right-1.5 top-1.5 flex gap-1.5">
+        <div className="absolute right-1.5 top-1.5 z-10 flex gap-1.5">
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            aria-label="Watch the selected moment full-screen"
+            aria-label="Watch this moment full-screen"
             className="rounded-md bg-black/55 p-1.5 text-white transition hover:bg-black/75"
           >
             <Maximize2 size={14} />
@@ -432,14 +618,13 @@ function ClipViewer({
 }
 
 // Full-screen player. Portalled to <body> so it escapes the result page's
-// `lg:-translate-x-1/2` ancestor (a transform breaks position:fixed). Native
-// <video controls> gives the YouTube-style slider / play / volume / fullscreen.
-// By default it LOOPS the selected moment [t-half, t+half] (the chunk Daniel asked
-// for); "Play full clip" lifts the clamp to watch the whole swim.
+// `lg:-translate-x-1/2` ancestor (a transform breaks position:fixed). Shows the
+// coached MOMENT (chunk-scoped ChunkPlayer, looping the window) by default;
+// "Play full clip" swaps to a native player of the whole swim.
 function ClipLightbox({
   clip,
   t,
-  half = 1.25,
+  half = 2,
   onClose,
 }: {
   clip: string;
@@ -447,7 +632,6 @@ function ClipLightbox({
   half?: number;
   onClose: () => void;
 }) {
-  const vref = useRef<HTMLVideoElement>(null);
   const [full, setFull] = useState(false);
   const start = Math.max(0, t - half);
   const end = t + half;
@@ -464,12 +648,6 @@ function ClipLightbox({
       document.body.style.overflow = prevOverflow;
     };
   }, [onClose]);
-
-  // Re-anchor to the chunk start whenever we switch back from full-clip.
-  useEffect(() => {
-    const v = vref.current;
-    if (v && !full) v.currentTime = Math.min(start, v.duration || start);
-  }, [full, start]);
 
   if (typeof document === "undefined") return null;
   return createPortal(
@@ -492,30 +670,25 @@ function ClipLightbox({
         className="flex flex-col items-center gap-3"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video
-          ref={vref}
-          src={clip}
-          controls
-          autoPlay
-          loop={!full}
-          playsInline
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            v.currentTime = full ? 0 : Math.min(start, v.duration || start);
-          }}
-          onTimeUpdate={(e) => {
-            // Keep playback inside the selected moment unless "full clip" is on.
-            const v = e.currentTarget;
-            if (
-              !full &&
-              (v.currentTime > end || v.currentTime < start - 0.05)
-            ) {
-              v.currentTime = start;
-            }
-          }}
-          className="max-h-[80vh] max-w-[92vw] rounded-lg bg-black shadow-2xl"
-        />
+        {full ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video
+            src={clip}
+            controls
+            autoPlay
+            playsInline
+            className="max-h-[80vh] max-w-[92vw] rounded-lg bg-black shadow-2xl"
+          />
+        ) : (
+          <ChunkPlayer
+            clip={clip}
+            t={t}
+            half={half}
+            autoPlay
+            className="rounded-lg shadow-2xl"
+            videoClassName="block max-h-[78vh] max-w-[92vw]"
+          />
+        )}
         <div className="flex items-center gap-3 text-sm text-white/90">
           <span className="tabular-nums">
             {full
