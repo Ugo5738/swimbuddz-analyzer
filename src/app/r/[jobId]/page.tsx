@@ -48,6 +48,7 @@ import {
   getPublicAnalysis,
   GUMROAD_CHECKOUT_BASE,
   inspectPublicAnalysis,
+  type InspectStatus,
   isSystemFailure,
   PRODUCTS,
   type PublicAnalysisJobDetail,
@@ -56,6 +57,13 @@ import {
 
 const POLL_MS = 15_000;
 const ACTIVE = new Set(["pending", "processing"]);
+type InspectOutcome =
+  | "ready"
+  | "pending"
+  | "queued"
+  | "processing"
+  | "retrying"
+  | "failed";
 
 export default function ResultPage() {
   return (
@@ -142,10 +150,7 @@ function ResultInner() {
   // polls the detail back in until that stroke's read lands (or a short timeout) —
   // the page re-renders as setDetail flows the new finding through buildCycles.
   const onInspect = useCallback(
-    async (
-      aspect: string,
-      instanceId: number,
-    ): Promise<"ready" | "pending"> => {
+    async (aspect: string, instanceId: number): Promise<InspectOutcome> => {
       if (!token || jobId === "demo") return "ready";
       const landed = (d: PublicAnalysisJobDetail | null) =>
         (d?.result?.coach_result?.results ?? []).some((c) =>
@@ -157,12 +162,15 @@ function ResultInner() {
                 : f.area === aspect),
           ),
         );
+      const inspectStatus = (d: PublicAnalysisJobDetail | null) =>
+        d?.result?.inspect_statuses?.[`${aspect}:${instanceId}`] ?? null;
       const res = await inspectPublicAnalysis(jobId, token, aspect, instanceId);
       if (res.status === "ready") {
         const d = await getPublicAnalysis(jobId, token).catch(() => null);
         if (d) setDetail(d);
         return "ready";
       }
+      if (res.status === "failed") return "failed";
       // The inspect is queued. Poll the job until this stroke's read lands and
       // flow each update through setDetail so the page refreshes itself the moment
       // it's ready. On the free tier a single read can take up to ~a minute when a
@@ -174,6 +182,7 @@ function ResultInner() {
         if (!d) continue;
         setDetail(d);
         if (landed(d)) return "ready";
+        if (inspectStatus(d)?.status === "failed") return "failed";
       }
       return "pending";
     },
@@ -294,7 +303,7 @@ function ResultBody({
 }: {
   detail: PublicAnalysisJobDetail;
   onRetry?: () => Promise<void>;
-  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
+  onInspect?: (aspect: string, instanceId: number) => Promise<InspectOutcome>;
 }) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
@@ -318,7 +327,7 @@ function ResultBody({
       <Centered>
         <Loader2 className="animate-spin text-brand-600" size={32} />
         <p className="mt-3 font-medium">
-          {detail.status === "pending" ? "Queued" : "Analyzing your stroke…"}
+          {detail.status === "processing" ? "Analyzing your stroke…" : "Queued"}
         </p>
         <p className="mt-1 text-sm text-slate-500">
           We&apos;ll email you when it&apos;s ready.
@@ -343,6 +352,7 @@ function ResultBody({
     ? (collate.extra.recovery_count_hedged as number)
     : null;
   const evidenceUrls = r?.coach_evidence_urls ?? null;
+  const inspectStatuses = r?.inspect_statuses ?? null;
   const clip = detail.annotated_video_url ?? detail.original_video_url ?? null;
   // Fault-first: lead with the coach's ranked verdict, not the cycles. The cycle
   // view is demoted to a "stroke by stroke" evidence lens below.
@@ -443,9 +453,9 @@ function ResultBody({
               </div>
             ) : readNothing ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                We couldn&apos;t get a clear read of this clip — the camera angle
-                or clarity made the stroke hard to make out, so we&apos;d rather
-                say so than guess. For a real read, film a{" "}
+                We couldn&apos;t get a clear read of this clip — the camera
+                angle or clarity made the stroke hard to make out, so we&apos;d
+                rather say so than guess. For a real read, film a{" "}
                 <strong>side-on, single-swimmer</strong> clip at about water
                 level, then re-run (it&apos;s free).
               </div>
@@ -478,6 +488,7 @@ function ResultBody({
                 setOpenId={setOpenCycle}
                 hedged={hedged}
                 evidenceUrls={evidenceUrls}
+                inspectStatuses={inspectStatuses}
                 clip={clip}
                 onInspect={onInspect}
               />
@@ -988,6 +999,7 @@ function StrokeByStroke({
   setOpenId,
   hedged,
   evidenceUrls,
+  inspectStatuses,
   clip,
   onInspect,
 }: {
@@ -996,8 +1008,9 @@ function StrokeByStroke({
   setOpenId: (id: number | null) => void;
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
+  inspectStatuses: Record<string, InspectStatus> | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
+  onInspect?: (aspect: string, instanceId: number) => Promise<InspectOutcome>;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -1021,6 +1034,7 @@ function StrokeByStroke({
             setOpenId={setOpenId}
             hedged={hedged}
             evidenceUrls={evidenceUrls}
+            inspectStatuses={inspectStatuses}
             clip={clip}
             onInspect={onInspect}
           />
@@ -1036,6 +1050,7 @@ function CycleSpine({
   setOpenId,
   hedged,
   evidenceUrls,
+  inspectStatuses,
   clip,
   onInspect,
 }: {
@@ -1044,8 +1059,9 @@ function CycleSpine({
   setOpenId: (id: number | null) => void;
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
+  inspectStatuses: Record<string, InspectStatus> | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
+  onInspect?: (aspect: string, instanceId: number) => Promise<InspectOutcome>;
 }) {
   const open = cycles.find((c) => c.id === openId) ?? null;
   return (
@@ -1111,6 +1127,7 @@ function CycleSpine({
         <CycleDetail
           cycle={open}
           evidenceUrls={evidenceUrls}
+          inspectStatus={inspectStatuses?.[`chunk:${open.id}`] ?? null}
           clip={clip}
           onInspect={onInspect}
         />
@@ -1123,21 +1140,49 @@ function CycleSpine({
   );
 }
 
+function retryEtaText(nextRetryAt?: string | null): string {
+  if (!nextRetryAt) return "";
+  const ms = Date.parse(nextRetryAt) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return "soon";
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  return minutes === 1 ? "in about 1 minute" : `in about ${minutes} minutes`;
+}
+
 function CycleDetail({
   cycle,
   evidenceUrls,
+  inspectStatus,
   clip,
   onInspect,
 }: {
   cycle: Cycle;
   evidenceUrls: Record<string, string> | null;
+  inspectStatus: InspectStatus | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
+  onInspect?: (aspect: string, instanceId: number) => Promise<InspectOutcome>;
 }) {
   const reads = cycle.subReads.filter((s) => s.finding);
   const [coaching, setCoaching] = useState(false);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState(false);
+  const activeRemote =
+    inspectStatus?.status === "queued" ||
+    inspectStatus?.status === "processing" ||
+    inspectStatus?.status === "retrying";
+  const retryEta = retryEtaText(inspectStatus?.next_retry_at);
+  const statusMessage = coaching
+    ? "Checking the video coach status…"
+    : inspectStatus?.status === "queued"
+      ? "Queued for the video coach. It will appear here automatically when it lands."
+      : inspectStatus?.status === "processing"
+        ? "The video coach is reading this stroke now."
+        : inspectStatus?.status === "retrying"
+          ? `The video coach is busy, so this stroke will retry automatically${retryEta ? ` ${retryEta}` : ""}.`
+          : pending
+            ? "Still coaching this stroke in the background — it'll appear here the moment it lands. Tap to check again."
+            : failed || inspectStatus?.status === "failed"
+              ? "The coach couldn't finish this stroke. You can try again."
+              : "This stroke isn't coached yet.";
 
   const coach = async () => {
     if (!onInspect) return;
@@ -1148,6 +1193,10 @@ function CycleDetail({
     try {
       const res = await onInspect("chunk", cycle.id);
       if (res === "pending") setPending(true);
+      if (res === "retrying" || res === "queued" || res === "processing") {
+        setPending(true);
+      }
+      if (res === "failed") setFailed(true);
     } catch {
       setFailed(true);
     } finally {
@@ -1175,15 +1224,7 @@ function CycleDetail({
         </div>
       ) : (
         <div className="space-y-2.5">
-          <p className="text-sm text-slate-500">
-            {coaching
-              ? "Coaching this stroke… it'll appear here automatically when it's ready (up to a minute when it's busy)."
-              : pending
-                ? "Still coaching this stroke in the background — it'll appear here the moment it lands. Tap to check again."
-                : failed
-                  ? "Couldn't reach the coach just now — give it another try."
-                  : "This stroke isn't coached yet."}
-          </p>
+          <p className="text-sm text-slate-500">{statusMessage}</p>
           {onInspect ? (
             <button
               type="button"
@@ -1193,10 +1234,14 @@ function CycleDetail({
             >
               {coaching ? (
                 <>
-                  <Loader2 className="animate-spin" size={14} /> Coaching…
+                  <Loader2 className="animate-spin" size={14} /> Checking…
                 </>
+              ) : activeRemote ? (
+                "Check status"
               ) : pending ? (
                 "Check again"
+              ) : failed || inspectStatus?.status === "failed" ? (
+                "Try again"
               ) : (
                 "Coach this stroke"
               )}

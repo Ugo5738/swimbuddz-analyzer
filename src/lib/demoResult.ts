@@ -72,6 +72,7 @@ export const DEMO_DETAIL: PublicAnalysisJobDetail = {
       "entry_reach:7": "/demo/frame_entry.jpg",
     },
     coach_share_urls: null,
+    inspect_statuses: null,
     coach_result: {
       input_profile: "side_on_above_water",
       gate_tier: "clean",

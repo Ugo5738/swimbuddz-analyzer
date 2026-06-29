@@ -1,6 +1,13 @@
 "use client";
 
-import { Activity, ArrowLeft, CheckCircle2, Loader2, Upload, Waves } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  CheckCircle2,
+  Loader2,
+  Upload,
+  Waves,
+} from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { trackAnalysisStarted } from "@/lib/analytics";
@@ -10,21 +17,21 @@ import {
   ApiError,
   createPublicAnalysis,
   type Discipline,
-  GUMROAD_CHECKOUT_BASE,
   getCredits,
+  GUMROAD_CHECKOUT_BASE,
   MAX_DURATION_SECONDS,
   PRODUCTS,
   type PublicAnalysisJob,
   readVideoDuration,
   redeemLicense,
 } from "@/lib/publicAnalyzer";
+import { compressVideoForUpload } from "@/lib/videoCompress";
 
 const DISCIPLINES: { value: Discipline; label: string; hint: string }[] = [
   { value: "general", label: "General", hint: "All-round clean technique" },
   { value: "sprint", label: "Sprint", hint: "Short & fast — power, tempo" },
   { value: "distance", label: "Distance", hint: "Efficient over many lengths" },
 ];
-import { compressVideoForUpload } from "@/lib/videoCompress";
 
 type Phase = "idle" | "working" | "queued" | "paywall" | "error";
 
@@ -48,47 +55,59 @@ export default function Home() {
   const [job, setJob] = useState<PublicAnalysisJob | null>(null);
   const fileRef = useRef<File | null>(null);
 
-  const run = useCallback(async (file: File, emailValue: string, disc: Discipline) => {
-    setPhase("working");
-    setError("");
-    try {
-      setBusyMsg("Checking your clip…");
-      let duration = 0;
+  const run = useCallback(
+    async (file: File, emailValue: string, disc: Discipline) => {
+      setPhase("working");
+      setError("");
       try {
-        duration = await readVideoDuration(file);
-      } catch {
-        /* non-fatal — the worker re-checks */
-      }
-      if (duration && duration > MAX_DURATION_SECONDS) {
+        setBusyMsg("Checking your clip…");
+        let duration = 0;
+        try {
+          duration = await readVideoDuration(file);
+        } catch {
+          /* non-fatal — the worker re-checks */
+        }
+        if (duration && duration > MAX_DURATION_SECONDS) {
+          setPhase("error");
+          setError(
+            `That clip is ${Math.round(duration)}s — please trim it to ${MAX_DURATION_SECONDS}s or less of a single length.`,
+          );
+          return;
+        }
+
+        setBusyMsg("Optimizing your video on this device…");
+        setProgress(0);
+        const compressed = await compressVideoForUpload(file, {
+          onProgress: (f) => setProgress(Math.round(f * 100)),
+        });
+
+        setBusyMsg("Uploading…");
+        setProgress(0);
+        const result = await createPublicAnalysis(
+          compressed.file,
+          emailValue,
+          disc,
+          setProgress,
+        );
+        storeToken(result.job_id, result.guest_token);
+        trackAnalysisStarted({ discipline: disc });
+        setJob(result);
+        setPhase("queued");
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 402) {
+          setPhase("paywall");
+          return;
+        }
         setPhase("error");
         setError(
-          `That clip is ${Math.round(duration)}s — please trim it to ${MAX_DURATION_SECONDS}s or less of a single length.`,
+          e instanceof Error
+            ? e.message
+            : "Something went wrong. Please try again.",
         );
-        return;
       }
-
-      setBusyMsg("Optimizing your video on this device…");
-      setProgress(0);
-      const compressed = await compressVideoForUpload(file, {
-        onProgress: (f) => setProgress(Math.round(f * 100)),
-      });
-
-      setBusyMsg("Uploading…");
-      setProgress(100);
-      const result = await createPublicAnalysis(compressed.file, emailValue, disc);
-      storeToken(result.job_id, result.guest_token);
-      trackAnalysisStarted({ discipline: disc });
-      setJob(result);
-      setPhase("queued");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 402) {
-        setPhase("paywall");
-        return;
-      }
-      setPhase("error");
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-    }
-  }, []);
+    },
+    [],
+  );
 
   const onSubmit = useCallback(
     (e: React.FormEvent<HTMLFormElement>) => {
@@ -124,7 +143,8 @@ export default function Home() {
       <Paywall
         email={email}
         onReady={() => {
-          if (fileRef.current && email) void run(fileRef.current, email, discipline);
+          if (fileRef.current && email)
+            void run(fileRef.current, email, discipline);
         }}
       />
     );
@@ -141,8 +161,8 @@ export default function Home() {
         <p className="mt-3 text-slate-600">
           Upload a short, side-on clip. We read your technique like a coach —
           your <strong>body line</strong>, <strong>recovery</strong>,{" "}
-          <strong>head &amp; breathing</strong> and <strong>entry</strong> — flag
-          what to work on, and suggest drills. Your{" "}
+          <strong>head &amp; breathing</strong> and <strong>entry</strong> —
+          flag what to work on, and suggest drills. Your{" "}
           <strong>first analysis is free</strong> — we&apos;ll email you the
           report when it&apos;s ready.
         </p>
@@ -293,8 +313,8 @@ function Queued({
       <h2 className="text-xl font-bold">You&apos;re in the queue</h2>
       <p className="mt-2 text-slate-700">{job.estimated_ready_hint}</p>
       <p className="mt-1 text-sm text-slate-500">
-        We&apos;ll email <strong>{email}</strong> a link as soon as your analysis
-        is ready. You can close this tab.
+        We&apos;ll email <strong>{email}</strong> a link as soon as your
+        analysis is ready. You can close this tab.
       </p>
       <p className="mt-4 text-xs text-slate-400">
         Credits remaining: {job.credits_remaining}
@@ -322,7 +342,9 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
       if (c.remaining_credits > 0) {
         onReady();
       } else {
-        setMsg("No credits found yet. If you just bought, give it a few seconds.");
+        setMsg(
+          "No credits found yet. If you just bought, give it a few seconds.",
+        );
       }
     } catch {
       setMsg("Couldn't check your balance — try again.");
@@ -350,7 +372,9 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
         <Activity className="mx-auto mb-3 text-brand-600" size={28} />
-        <h2 className="text-xl font-bold">You&apos;ve used your free analysis</h2>
+        <h2 className="text-xl font-bold">
+          You&apos;ve used your free analysis
+        </h2>
         <p className="mt-1 text-sm text-slate-600">
           Grab a credit pack to keep analyzing. One-time purchase, no
           subscription.
@@ -370,7 +394,9 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
                 : "border-slate-200 bg-white"
             }`}
           >
-            <div className="text-sm font-semibold text-slate-500">{p.label}</div>
+            <div className="text-sm font-semibold text-slate-500">
+              {p.label}
+            </div>
             <div className="my-1 text-2xl font-bold">${p.priceUsd}</div>
             <div className="text-xs text-slate-500">
               {p.credits} {p.credits === 1 ? "analysis" : "analyses"}

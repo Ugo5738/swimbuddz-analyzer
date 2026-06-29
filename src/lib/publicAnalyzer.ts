@@ -99,6 +99,7 @@ export type AnalysisResultPayload = {
   coach_result: CoachResult | null;
   coach_evidence_urls: Record<string, string> | null;
   coach_share_urls: Record<string, string> | null;
+  inspect_statuses: Record<string, InspectStatus> | null;
 };
 
 export type PublicAnalysisJob = {
@@ -108,6 +109,7 @@ export type PublicAnalysisJob = {
   guest_token: string;
   credits_remaining: number;
   estimated_ready_hint: string;
+  queue_depth?: number | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -127,12 +129,35 @@ export type PublicAnalysisJobDetail = {
   result: AnalysisResultPayload | null;
   original_video_url: string | null;
   annotated_video_url: string | null;
+  queue_depth?: number | null;
 };
 
 export type PublicCredits = {
   email: string;
   can_submit_free: boolean;
   remaining_credits: number;
+};
+
+export type PublicDirectUpload = {
+  job_id: string;
+  guest_token: string;
+  upload_url: string;
+  method: "PUT";
+  headers: Record<string, string>;
+  expires_in: number;
+};
+
+export type InspectStatus = {
+  aspect: string;
+  instance_id: number;
+  status: "queued" | "processing" | "retrying" | "completed" | "failed";
+  attempt: number;
+  message?: string | null;
+  next_retry_at?: string | null;
+  queue_depth?: number | null;
+  error_reason?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -197,6 +222,7 @@ export async function createPublicAnalysis(
   file: File,
   guestEmail: string,
   discipline: Discipline = "general",
+  onUploadProgress?: (percent: number) => void,
 ): Promise<PublicAnalysisJob> {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ApiError(
@@ -206,6 +232,90 @@ export async function createPublicAnalysis(
       } MB.`,
     );
   }
+  try {
+    const upload = await createDirectUpload(file, guestEmail, discipline);
+    await putDirectUpload(file, upload, onUploadProgress);
+    const resp = await fetch(
+      `${API_BASE_URL}/api/v1/ai/public/analyze/${upload.job_id}/complete-upload?guest_token=${encodeURIComponent(upload.guest_token)}`,
+      { method: "POST", cache: "no-store" },
+    );
+    if (!resp.ok) throw await toError(resp);
+    return (await resp.json()) as PublicAnalysisJob;
+  } catch (e) {
+    if (
+      e instanceof ApiError &&
+      (e.status === 404 || e.status === 405 || e.status === 501)
+    ) {
+      return createMultipartPublicAnalysis(file, guestEmail, discipline);
+    }
+    throw e;
+  }
+}
+
+async function createDirectUpload(
+  file: File,
+  guestEmail: string,
+  discipline: Discipline,
+): Promise<PublicDirectUpload> {
+  const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/analyze/uploads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      guest_email: guestEmail,
+      filename: file.name || "clip.mp4",
+      content_type: file.type || "video/mp4",
+      size_bytes: file.size,
+      stroke_type: "freestyle",
+      discipline,
+    }),
+    cache: "no-store",
+  });
+  if (!resp.ok) throw await toError(resp);
+  return (await resp.json()) as PublicDirectUpload;
+}
+
+function putDirectUpload(
+  file: File,
+  upload: PublicDirectUpload,
+  onUploadProgress?: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(upload.method, upload.upload_url);
+    for (const [key, value] of Object.entries(upload.headers || {})) {
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onUploadProgress) {
+        onUploadProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onUploadProgress?.(100);
+        resolve();
+      } else {
+        reject(new ApiError(xhr.status, `Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => {
+      reject(
+        new ApiError(
+          0,
+          "Upload failed. Please check your connection and try again.",
+        ),
+      );
+    };
+    onUploadProgress?.(0);
+    xhr.send(file);
+  });
+}
+
+async function createMultipartPublicAnalysis(
+  file: File,
+  guestEmail: string,
+  discipline: Discipline,
+): Promise<PublicAnalysisJob> {
   const fd = new FormData();
   fd.append("video", file);
   fd.append("guest_email", guestEmail);
@@ -251,13 +361,15 @@ export async function retryPublicAnalysis(
 }
 
 export type InspectResponse = {
-  status: "ready" | "inspecting";
+  status: "ready" | InspectStatus["status"];
   finding?: CoachFinding;
+  inspect_status?: InspectStatus;
+  queue_depth?: number | null;
 };
 
 // Request an on-demand read of one recovery (the per-stroke drilldown). "ready"
-// means it was already coached (free); "inspecting" means a worker job was queued —
-// poll getPublicAnalysis until the finding appears in coach_result.
+// means it was already coached (free); queued/retrying/processing statuses include
+// visible backoff state in inspect_status while the frontend polls.
 export async function inspectPublicAnalysis(
   jobId: string,
   guestToken: string,
