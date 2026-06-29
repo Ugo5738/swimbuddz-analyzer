@@ -28,6 +28,20 @@ import {
 import { createPortal } from "react-dom";
 
 import {
+  trackAnalysisCompleted,
+  trackBuyClicked,
+  trackStrokeCoached,
+} from "@/lib/analytics";
+import {
+  buildCycles,
+  buildVerdict,
+  coachSummary,
+  type Cycle,
+  cycleThumb,
+  defaultOpenCycle,
+} from "@/lib/cycles";
+import { DEMO_DETAIL } from "@/lib/demoResult";
+import {
   type CoachFinding,
   failureMessage,
   fmtTime,
@@ -39,20 +53,6 @@ import {
   type PublicAnalysisJobDetail,
   retryPublicAnalysis,
 } from "@/lib/publicAnalyzer";
-import {
-  buildCycles,
-  buildVerdict,
-  coachSummary,
-  type Cycle,
-  cycleThumb,
-  defaultOpenCycle,
-} from "@/lib/cycles";
-import {
-  trackAnalysisCompleted,
-  trackBuyClicked,
-  trackStrokeCoached,
-} from "@/lib/analytics";
-import { DEMO_DETAIL } from "@/lib/demoResult";
 
 const POLL_MS = 15_000;
 const ACTIVE = new Set(["pending", "processing"]);
@@ -142,26 +142,36 @@ function ResultInner() {
   // polls the detail back in until that stroke's read lands (or a short timeout) —
   // the page re-renders as setDetail flows the new finding through buildCycles.
   const onInspect = useCallback(
-    async (aspect: string, instanceId: number) => {
-      if (!token || jobId === "demo") return;
-      const res = await inspectPublicAnalysis(jobId, token, aspect, instanceId);
-      if (res.status === "ready") {
-        const d = await getPublicAnalysis(jobId, token).catch(() => null);
-        if (d) setDetail(d);
-        return;
-      }
-      for (let i = 0; i < 8; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const d = await getPublicAnalysis(jobId, token).catch(() => null);
-        if (!d) continue;
-        setDetail(d);
-        const landed = (d.result?.coach_result?.results ?? []).some((c) =>
+    async (
+      aspect: string,
+      instanceId: number,
+    ): Promise<"ready" | "pending"> => {
+      if (!token || jobId === "demo") return "ready";
+      const landed = (d: PublicAnalysisJobDetail | null) =>
+        (d?.result?.coach_result?.results ?? []).some((c) =>
           c.findings.some(
             (f) => f.instance_id === instanceId && f.area === aspect,
           ),
         );
-        if (landed) break;
+      const res = await inspectPublicAnalysis(jobId, token, aspect, instanceId);
+      if (res.status === "ready") {
+        const d = await getPublicAnalysis(jobId, token).catch(() => null);
+        if (d) setDetail(d);
+        return "ready";
       }
+      // The inspect is queued. Poll the job until this stroke's read lands and
+      // flow each update through setDetail so the page refreshes itself the moment
+      // it's ready. On the free tier a single read can take up to ~a minute when a
+      // minute is busy (spacing + patient retry), so we wait generously (~90s)
+      // rather than give up silently after a few seconds.
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const d = await getPublicAnalysis(jobId, token).catch(() => null);
+        if (!d) continue;
+        setDetail(d);
+        if (landed(d)) return "ready";
+      }
+      return "pending";
     },
     [jobId, token],
   );
@@ -280,7 +290,7 @@ function ResultBody({
 }: {
   detail: PublicAnalysisJobDetail;
   onRetry?: () => Promise<void>;
-  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
+  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
 }) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
@@ -965,7 +975,7 @@ function StrokeByStroke({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
+  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -1013,15 +1023,15 @@ function CycleSpine({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
+  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
 }) {
   const open = cycles.find((c) => c.id === openId) ?? null;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <p className="font-semibold">Your strokes, one by one</p>
       <p className="mb-3 text-xs text-slate-500">
-        ~{hedged ?? cycles.length} over-water recoveries (approximate). The first
-        few are coached for you; tap any other to coach it too.
+        ~{hedged ?? cycles.length} over-water recoveries (approximate). The
+        first few are coached for you; tap any other to coach it too.
       </p>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -1100,19 +1110,22 @@ function CycleDetail({
   cycle: Cycle;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
-  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
+  onInspect?: (aspect: string, instanceId: number) => Promise<"ready" | "pending">;
 }) {
   const reads = cycle.subReads.filter((s) => s.finding);
   const [coaching, setCoaching] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState(false);
 
   const coach = async () => {
     if (!onInspect) return;
     trackStrokeCoached();
     setCoaching(true);
     setFailed(false);
+    setPending(false);
     try {
-      await onInspect("recovery_elbow", cycle.id);
+      const res = await onInspect("recovery_elbow", cycle.id);
+      if (res === "pending") setPending(true);
     } catch {
       setFailed(true);
     } finally {
@@ -1142,10 +1155,12 @@ function CycleDetail({
         <div className="space-y-2.5">
           <p className="text-sm text-slate-500">
             {coaching
-              ? "Coaching this stroke… this takes a moment — your read will appear here."
-              : failed
-                ? "Couldn't coach this stroke just now — give it another try."
-                : "This stroke isn't coached yet."}
+              ? "Coaching this stroke… it'll appear here automatically when it's ready (up to a minute when it's busy)."
+              : pending
+                ? "Still coaching this stroke in the background — it'll appear here the moment it lands. Tap to check again."
+                : failed
+                  ? "Couldn't reach the coach just now — give it another try."
+                  : "This stroke isn't coached yet."}
           </p>
           {onInspect ? (
             <button
@@ -1158,6 +1173,8 @@ function CycleDetail({
                 <>
                   <Loader2 className="animate-spin" size={14} /> Coaching…
                 </>
+              ) : pending ? (
+                "Check again"
               ) : (
                 "Coach this stroke"
               )}
@@ -1422,8 +1439,8 @@ function BuyMore() {
     <div className="rounded-2xl border border-slate-200 bg-white p-5">
       <p className="font-semibold">Analyse another swim</p>
       <p className="mt-1 text-sm text-slate-600">
-        1 credit = a full read of one clip — your top fixes, what&apos;s working,
-        and the stroke-by-stroke. Packs from $6.
+        1 credit = a full read of one uploaded clip — your top fixes,
+        what&apos;s working, and the stroke-by-stroke analysis. Packs from $6.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {PRODUCTS.map((p) => (
