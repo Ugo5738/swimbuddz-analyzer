@@ -14,6 +14,7 @@ import type { CoachFinding, PublicAnalysisJobDetail } from "./publicAnalyzer";
 export const ABOVE_WATER = [
   { key: "entry_reach", label: "Entry & reach" },
   { key: "recovery_elbow", label: "Recovery & elbow" },
+  { key: "body_rotation", label: "Body rotation" },
   { key: "head_breath", label: "Head & breathing" },
   { key: "body_line", label: "Body line" },
 ] as const;
@@ -49,21 +50,21 @@ export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
     coachedCount: 0,
   }));
 
-  // Only recovery/elbow genuinely varies stroke to stroke, so it is the ONLY
-  // aspect that lives per-cycle (matched to its exact instance, never guessed).
-  // Continuous habits — head, body line, reach — are stated ONCE in the verdict
-  // and are never pinned to a single cycle; doing so via nearest-timestamp
-  // mis-taught an every-stroke habit as a one-stroke event.
-  const recoverySlot = ABOVE_WATER.findIndex((a) => a.key === "recovery_elbow");
+  // The chunk coach reads EVERY visible aspect of a coached stroke (recovery,
+  // rotation, head, body line) and tags each finding with its instance_id, so a
+  // cycle can carry a full per-aspect read. Pin each aspect finding to its exact
+  // instance + slot (never guessed by nearest-timestamp). Uncoached cycles keep
+  // null sub-reads → "not coached yet" + the on-demand button.
+  const slotOf = new Map(ABOVE_WATER.map((a, i) => [a.key as string, i]));
   const findings = (r?.coach_result?.results ?? []).flatMap((c) => c.findings);
   for (const f of findings) {
-    if (f.area !== "recovery_elbow" || typeof f.instance_id !== "number")
-      continue;
-    if (isNoiseFinding(f)) continue;
+    if (typeof f.instance_id !== "number" || !f.area || isNoiseFinding(f)) continue;
+    const slot = slotOf.get(f.area);
+    if (slot === undefined) continue;
     const ci = cycles.findIndex((c) => c.id === f.instance_id);
     if (ci < 0) continue;
-    if (!cycles[ci].subReads[recoverySlot].finding) {
-      cycles[ci].subReads[recoverySlot].finding = f;
+    if (!cycles[ci].subReads[slot].finding) {
+      cycles[ci].subReads[slot].finding = f;
     }
   }
 
@@ -73,8 +74,10 @@ export function buildCycles(detail: PublicAnalysisJobDetail): Cycle[] {
   return cycles;
 }
 
-// The representative thumbnail for a cycle tile: prefer its recovery frame, then
-// any coached sub-read's frame. Undefined → the tile shows a water placeholder.
+// The representative thumbnail for a cycle tile: prefer a coached sub-read's frame,
+// then fall back to the per-recovery thumbnail the backend uploads for EVERY detected
+// recovery (keyed by instance id) — so an uncoached tile still shows its moment.
+// Undefined only when neither exists → the tile shows a water placeholder.
 export function cycleThumb(
   cycle: Cycle,
   evidenceUrls: Record<string, string> | null,
@@ -89,7 +92,18 @@ export function cycleThumb(
       if (url) return url;
     }
   }
-  return undefined;
+  // Fallback: the always-uploaded per-recovery thumbnail (coached or not).
+  return evidenceUrls[`recovery_thumbnail:${cycle.id}`];
+}
+
+// The aggregator's collated headline read (chunk engine), or null on the legacy
+// engine (which had no summary component).
+export function coachSummary(detail: PublicAnalysisJobDetail): string | null {
+  const agg = (detail.result?.coach_result?.results ?? []).find(
+    (c) => c.component === "aggregator",
+  );
+  const s = (agg?.meta as { summary?: unknown } | undefined)?.summary;
+  return typeof s === "string" && s.trim() ? s.trim() : null;
 }
 
 // Open the richest cycle by default so the cycle lens lands on a full read.
@@ -144,10 +158,18 @@ function isCantSee(f: CoachFinding): boolean {
 // aspect (continuous habits stated once); the elbow story comes in as the fatigue
 // read. Per-cycle recovery fixes stay in the stroke-by-stroke evidence lens.
 export function buildVerdict(detail: PublicAnalysisJobDetail): Verdict {
-  const findings = (detail.result?.coach_result?.results ?? [])
+  const raw = (detail.result?.coach_result?.results ?? [])
     .flatMap((c) => c.findings)
     .filter((f) => f.component !== "gate" && f.component !== "collate")
     .filter((f) => !isNoiseFinding(f));
+
+  // The top-line read = the AGGREGATOR's synthesis when it ran (chunk engine); the
+  // per-chunk findings stay the stroke-by-stroke detail, never the top fixes. With
+  // no aggregator (legacy holistic engine) fall back to everything-but-chunk.
+  const hasAgg = raw.some((f) => f.component === "aggregator");
+  const findings = hasAgg
+    ? raw.filter((f) => f.component === "aggregator")
+    : raw.filter((f) => f.component !== "chunk_coach");
 
   // Dedupe: aspect findings collapse by their area (one entry/head/body-line
   // read). The holistic coach emits SEVERAL distinct points with no area, so

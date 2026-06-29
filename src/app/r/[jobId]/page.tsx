@@ -33,6 +33,7 @@ import {
   fmtTime,
   getPublicAnalysis,
   GUMROAD_CHECKOUT_BASE,
+  inspectPublicAnalysis,
   isSystemFailure,
   PRODUCTS,
   type PublicAnalysisJobDetail,
@@ -41,6 +42,7 @@ import {
 import {
   buildCycles,
   buildVerdict,
+  coachSummary,
   type Cycle,
   cycleThumb,
   defaultOpenCycle,
@@ -123,6 +125,34 @@ function ResultInner() {
     void poll();
   }, [jobId, token, poll]);
 
+  // Coach ONE stroke on demand (free while in preview). Kicks the inspect job, then
+  // polls the detail back in until that stroke's read lands (or a short timeout) —
+  // the page re-renders as setDetail flows the new finding through buildCycles.
+  const onInspect = useCallback(
+    async (aspect: string, instanceId: number) => {
+      if (!token || jobId === "demo") return;
+      const res = await inspectPublicAnalysis(jobId, token, aspect, instanceId);
+      if (res.status === "ready") {
+        const d = await getPublicAnalysis(jobId, token).catch(() => null);
+        if (d) setDetail(d);
+        return;
+      }
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const d = await getPublicAnalysis(jobId, token).catch(() => null);
+        if (!d) continue;
+        setDetail(d);
+        const landed = (d.result?.coach_result?.results ?? []).some((c) =>
+          c.findings.some(
+            (f) => f.instance_id === instanceId && f.area === aspect,
+          ),
+        );
+        if (landed) break;
+      }
+    },
+    [jobId, token],
+  );
+
   return (
     // Mobile stays in the shared max-w-3xl column; on desktop the result page
     // breaks out wider (centred in the viewport, scrollbar-safe via 92vw) so the
@@ -153,7 +183,7 @@ function ResultInner() {
           </p>
         </Centered>
       ) : detail ? (
-        <ResultBody detail={detail} onRetry={onRetry} />
+        <ResultBody detail={detail} onRetry={onRetry} onInspect={onInspect} />
       ) : null}
     </div>
   );
@@ -233,9 +263,11 @@ function RetryInline({
 function ResultBody({
   detail,
   onRetry,
+  onInspect,
 }: {
   detail: PublicAnalysisJobDetail;
   onRetry?: () => Promise<void>;
+  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
 }) {
   // Hooks must run before any early return.
   const [view, setView] = useState<"above" | "under">("above");
@@ -291,6 +323,7 @@ function ResultBody({
     ? buildVerdict(detail)
     : { fixes: [], strengths: [], notes: [], cantSee: [] };
   const topFix = verdict.fixes[0]?.observation ?? null;
+  const summary = coach ? coachSummary(detail) : null;
   // A coach component that errored (e.g. the holistic read hit a rate limit) means
   // the read is PARTIAL — never present that as a clean "nothing to fix".
   const coachErrored =
@@ -345,6 +378,21 @@ function ResultBody({
       ) : (
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6">
           <div className="space-y-6">
+            {summary ? (
+              <section className="rounded-2xl border border-brand-200 bg-brand-50 p-4">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-700">
+                  Your read
+                </p>
+                <p className="text-[15px] leading-relaxed text-brand-900">
+                  {summary}
+                </p>
+                <p className="mt-2 text-xs text-brand-700/80">
+                  Read from the strokes we analyzed — see them stroke by stroke
+                  below.
+                </p>
+              </section>
+            ) : null}
+
             {verdict.fixes.length ? (
               <TopFixes
                 fixes={verdict.fixes}
@@ -386,6 +434,7 @@ function ResultBody({
                 hedged={hedged}
                 evidenceUrls={evidenceUrls}
                 clip={clip}
+                onInspect={onInspect}
               />
             ) : null}
           </div>
@@ -895,6 +944,7 @@ function StrokeByStroke({
   hedged,
   evidenceUrls,
   clip,
+  onInspect,
 }: {
   cycles: Cycle[];
   openId: number | null;
@@ -902,6 +952,7 @@ function StrokeByStroke({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
+  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -926,6 +977,7 @@ function StrokeByStroke({
             hedged={hedged}
             evidenceUrls={evidenceUrls}
             clip={clip}
+            onInspect={onInspect}
           />
         </div>
       ) : null}
@@ -940,6 +992,7 @@ function CycleSpine({
   hedged,
   evidenceUrls,
   clip,
+  onInspect,
 }: {
   cycles: Cycle[];
   openId: number | null;
@@ -947,14 +1000,15 @@ function CycleSpine({
   hedged: number | null;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
+  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
 }) {
   const open = cycles.find((c) => c.id === openId) ?? null;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="font-semibold">Your recovery, stroke by stroke</p>
+      <p className="font-semibold">Your strokes, one by one</p>
       <p className="mb-3 text-xs text-slate-500">
-        ~{hedged ?? cycles.length} over-water recoveries (approximate) — the one
-        thing that changes stroke to stroke. Tap one to see its elbow read.
+        ~{hedged ?? cycles.length} over-water recoveries (approximate). The first
+        few are coached for you; tap any other to coach it too.
       </p>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -1009,10 +1063,15 @@ function CycleSpine({
       </div>
 
       {open ? (
-        <CycleDetail cycle={open} evidenceUrls={evidenceUrls} clip={clip} />
+        <CycleDetail
+          cycle={open}
+          evidenceUrls={evidenceUrls}
+          clip={clip}
+          onInspect={onInspect}
+        />
       ) : (
         <p className="mt-3 text-sm text-slate-500">
-          Tap a cycle above to see what the camera caught in it.
+          Tap a stroke above to see what the camera caught in it.
         </p>
       )}
     </section>
@@ -1023,12 +1082,30 @@ function CycleDetail({
   cycle,
   evidenceUrls,
   clip,
+  onInspect,
 }: {
   cycle: Cycle;
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
+  onInspect?: (aspect: string, instanceId: number) => Promise<void>;
 }) {
   const reads = cycle.subReads.filter((s) => s.finding);
+  const [coaching, setCoaching] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const coach = async () => {
+    if (!onInspect) return;
+    setCoaching(true);
+    setFailed(false);
+    try {
+      await onInspect("recovery_elbow", cycle.id);
+    } catch {
+      setFailed(true);
+    } finally {
+      setCoaching(false);
+    }
+  };
+
   return (
     <div className="mt-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
@@ -1048,9 +1125,31 @@ function CycleDetail({
           ))}
         </div>
       ) : (
-        <p className="text-sm text-slate-500">
-          We couldn&apos;t read a clear recovery in this stroke.
-        </p>
+        <div className="space-y-2.5">
+          <p className="text-sm text-slate-500">
+            {coaching
+              ? "Coaching this stroke… this takes a moment — your read will appear here."
+              : failed
+                ? "Couldn't coach this stroke just now — give it another try."
+                : "This stroke isn't coached yet."}
+          </p>
+          {onInspect ? (
+            <button
+              type="button"
+              onClick={coach}
+              disabled={coaching}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60"
+            >
+              {coaching ? (
+                <>
+                  <Loader2 className="animate-spin" size={14} /> Coaching…
+                </>
+              ) : (
+                "Coach this stroke"
+              )}
+            </button>
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -1307,9 +1406,10 @@ function ShareRead({ topFix }: { topFix: string | null }) {
 function BuyMore() {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5">
-      <p className="font-semibold">Got another clip?</p>
+      <p className="font-semibold">Analyse another swim</p>
       <p className="mt-1 text-sm text-slate-600">
-        Analyse your next session — credit packs from $6.
+        1 credit = a full read of one clip — your top fixes, what&apos;s working,
+        and the stroke-by-stroke. Packs from $6.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {PRODUCTS.map((p) => (
@@ -1321,10 +1421,14 @@ function BuyMore() {
             className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-800 hover:border-brand-300"
           >
             <span className="font-semibold">{p.label}</span> · {p.credits}{" "}
-            {p.credits > 1 ? "clips" : "clip"} · ${p.priceUsd}
+            {p.credits > 1 ? "full clips" : "full clip"} · ${p.priceUsd}
           </a>
         ))}
       </div>
+      <p className="mt-2 text-xs text-slate-400">
+        A “clip” is one complete analysis. Coaching extra strokes on a clip you
+        already ran is free.
+      </p>
     </div>
   );
 }
