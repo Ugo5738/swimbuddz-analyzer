@@ -56,7 +56,9 @@ import {
 } from "@/lib/publicAnalyzer";
 
 const POLL_MS = 15_000;
+const INSPECT_POLL_MS = 10_000;
 const ACTIVE = new Set(["pending", "processing"]);
+const ACTIVE_INSPECT = new Set(["queued", "processing", "retrying"]);
 type InspectOutcome =
   | "ready"
   | "pending"
@@ -134,9 +136,20 @@ function ResultInner() {
     };
   }, [poll]);
 
-  // One-click retry of a FAILED job (re-run on the stored clip, free). Throws on
-  // failure so the button can fall back to "upload again"; on success we re-poll
-  // and the job flips back to analyzing.
+  const hasActiveInspect = useMemo(() => {
+    const statuses = detail?.result?.inspect_statuses ?? {};
+    return Object.values(statuses).some((s) => ACTIVE_INSPECT.has(s.status));
+  }, [detail]);
+
+  useEffect(() => {
+    if (!hasActiveInspect || jobId === "demo") return;
+    const id = setTimeout(() => void poll(), INSPECT_POLL_MS);
+    return () => clearTimeout(id);
+  }, [hasActiveInspect, jobId, poll]);
+
+  // One-click retry of a failed or partial job (re-run on the stored clip, free).
+  // Throws on failure so the button can fall back to "upload again"; on success
+  // we re-poll and the job flips back to analyzing.
   const onRetry = useCallback(async () => {
     if (!token) return;
     await retryPublicAnalysis(jobId, token);
@@ -146,9 +159,8 @@ function ResultInner() {
     void poll();
   }, [jobId, token, poll]);
 
-  // Coach ONE stroke on demand (free while in preview). Kicks the inspect job, then
-  // polls the detail back in until that stroke's read lands (or a short timeout) —
-  // the page re-renders as setDetail flows the new finding through buildCycles.
+  // Coach ONE stroke on demand (free while in preview). Kicks the inspect job and
+  // lets the page-level active-inspect poll keep the status fresh until it lands.
   const onInspect = useCallback(
     async (aspect: string, instanceId: number): Promise<InspectOutcome> => {
       if (!token || jobId === "demo") return "ready";
@@ -171,18 +183,19 @@ function ResultInner() {
         return "ready";
       }
       if (res.status === "failed") return "failed";
-      // The inspect is queued. Poll the job until this stroke's read lands and
-      // flow each update through setDetail so the page refreshes itself the moment
-      // it's ready. On the free tier a single read can take up to ~a minute when a
-      // minute is busy (spacing + patient retry), so we wait generously (~90s)
-      // rather than give up silently after a few seconds.
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const d = await getPublicAnalysis(jobId, token).catch(() => null);
-        if (!d) continue;
+      const d = await getPublicAnalysis(jobId, token).catch(() => null);
+      if (d) {
         setDetail(d);
         if (landed(d)) return "ready";
-        if (inspectStatus(d)?.status === "failed") return "failed";
+        const status = inspectStatus(d)?.status;
+        if (status === "failed") return "failed";
+        if (
+          status === "queued" ||
+          status === "processing" ||
+          status === "retrying"
+        ) {
+          return status;
+        }
       }
       return "pending";
     },
@@ -375,6 +388,9 @@ function ResultBody({
     !verdict.cantSee.length &&
     !summary &&
     !cycles.some((c) => c.coachedCount > 0);
+  const detectedButNoReliableRead =
+    readNothing &&
+    (coachErrored || (coach?.gate_tier === "clean" && cycles.length > 0));
 
   return (
     <div className="space-y-6">
@@ -407,8 +423,9 @@ function ResultBody({
         {coachErrored && !isWorking ? (
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <span className="min-w-[12rem] flex-1">
-              Part of the read didn&apos;t finish this time (we hit a temporary
-              limit). Re-running is free and usually returns the full coaching.
+              {readNothing
+                ? "We detected your strokes, but the AI coach did not finish a reliable coaching read yet. Re-running is free and usually returns the full coaching."
+                : "Part of the read didn't finish this time (we hit a temporary limit). Re-running is free and usually returns the full coaching."}
             </span>
             {onRetry ? <RetryInline onRetry={onRetry} /> : null}
           </div>
@@ -446,6 +463,12 @@ function ResultBody({
                 evidenceUrls={evidenceUrls}
                 clip={clip}
               />
+            ) : detectedButNoReliableRead ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                We detected your strokes, but the AI coach did not finish a
+                reliable coaching read yet. Re-run (free) for the complete
+                coaching.
+              </div>
             ) : coachErrored ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                 We couldn&apos;t finish the full read this time — what we did
@@ -1179,7 +1202,7 @@ function CycleDetail({
         : inspectStatus?.status === "retrying"
           ? `The video coach is busy, so this stroke will retry automatically${retryEta ? ` ${retryEta}` : ""}.`
           : pending
-            ? "Still coaching this stroke in the background — it'll appear here the moment it lands. Tap to check again."
+            ? "Still coaching this stroke in the background — we'll keep checking and show it here when it lands."
             : failed || inspectStatus?.status === "failed"
               ? "The coach couldn't finish this stroke. You can try again."
               : "This stroke isn't coached yet.";
@@ -1229,7 +1252,7 @@ function CycleDetail({
             <button
               type="button"
               onClick={coach}
-              disabled={coaching}
+              disabled={coaching || activeRemote}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60"
             >
               {coaching ? (
@@ -1237,7 +1260,7 @@ function CycleDetail({
                   <Loader2 className="animate-spin" size={14} /> Checking…
                 </>
               ) : activeRemote ? (
-                "Check status"
+                "Status updating"
               ) : pending ? (
                 "Check again"
               ) : failed || inspectStatus?.status === "failed" ? (

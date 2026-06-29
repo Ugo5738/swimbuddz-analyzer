@@ -346,8 +346,8 @@ export async function getPublicAnalysis(
   return (await resp.json()) as PublicAnalysisJobDetail;
 }
 
-// Re-run a FAILED analysis on its stored clip — free (the credit was refunded on
-// failure). The job flips back to pending; keep polling getPublicAnalysis.
+// Re-run a failed or system-limited partial analysis on its stored clip — free.
+// The job flips back to pending; keep polling getPublicAnalysis.
 export async function retryPublicAnalysis(
   jobId: string,
   guestToken: string,
