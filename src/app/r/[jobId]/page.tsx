@@ -150,7 +150,11 @@ function ResultInner() {
       const landed = (d: PublicAnalysisJobDetail | null) =>
         (d?.result?.coach_result?.results ?? []).some((c) =>
           c.findings.some(
-            (f) => f.instance_id === instanceId && f.area === aspect,
+            (f) =>
+              f.instance_id === instanceId &&
+              (aspect === "chunk"
+                ? c.component === "chunk_coach"
+                : f.area === aspect),
           ),
         );
       const res = await inspectPublicAnalysis(jobId, token, aspect, instanceId);
@@ -1142,7 +1146,7 @@ function CycleDetail({
     setFailed(false);
     setPending(false);
     try {
-      const res = await onInspect("recovery_elbow", cycle.id);
+      const res = await onInspect("chunk", cycle.id);
       if (res === "pending") setPending(true);
     } catch {
       setFailed(true);
