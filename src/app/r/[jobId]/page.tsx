@@ -47,6 +47,11 @@ import {
   cycleThumb,
   defaultOpenCycle,
 } from "@/lib/cycles";
+import {
+  trackAnalysisCompleted,
+  trackBuyClicked,
+  trackStrokeCoached,
+} from "@/lib/analytics";
 import { DEMO_DETAIL } from "@/lib/demoResult";
 
 const POLL_MS = 15_000;
@@ -75,6 +80,7 @@ function ResultInner() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completedFired = useRef(false);
 
   const token =
     search.get("guest_token") ||
@@ -97,6 +103,13 @@ function ResultInner() {
       const d = await getPublicAnalysis(jobId, token);
       setDetail(d);
       setLoading(false);
+      if (d.status === "completed" && !completedFired.current) {
+        completedFired.current = true;
+        trackAnalysisCompleted({
+          discipline: d.discipline,
+          gate_tier: d.result?.coach_result?.gate_tier ?? undefined,
+        });
+      }
       if (ACTIVE.has(d.status)) {
         timer.current = setTimeout(poll, POLL_MS);
       }
@@ -1095,6 +1108,7 @@ function CycleDetail({
 
   const coach = async () => {
     if (!onInspect) return;
+    trackStrokeCoached();
     setCoaching(true);
     setFailed(false);
     try {
@@ -1418,6 +1432,13 @@ function BuyMore() {
             href={`${GUMROAD_CHECKOUT_BASE}${p.permalink}`}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() =>
+              trackBuyClicked({
+                pack: p.label,
+                credits: p.credits,
+                usd: p.priceUsd,
+              })
+            }
             className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-800 hover:border-brand-300"
           >
             <span className="font-semibold">{p.label}</span> · {p.credits}{" "}

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
+        <GoogleAnalytics />
         <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-8 sm:py-12">
           <header className="mb-8 flex items-center gap-2">
             <span className="text-xl font-bold tracking-tight text-brand-700">

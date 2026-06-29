@@ -3,6 +3,8 @@
 import { Activity, ArrowLeft, CheckCircle2, Loader2, Upload, Waves } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
+import { trackAnalysisStarted } from "@/lib/analytics";
+
 import {
   ACCEPTED_VIDEO_MIME,
   ApiError,
@@ -75,6 +77,7 @@ export default function Home() {
       setProgress(100);
       const result = await createPublicAnalysis(compressed.file, emailValue, disc);
       storeToken(result.job_id, result.guest_token);
+      trackAnalysisStarted({ discipline: disc });
       setJob(result);
       setPhase("queued");
     } catch (e) {
