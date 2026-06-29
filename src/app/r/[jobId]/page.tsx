@@ -351,6 +351,16 @@ function ResultBody({
   // the read is PARTIAL — never present that as a clean "nothing to fix".
   const coachErrored =
     coach?.results.some((c) => c.component !== "gate" && c.error) ?? false;
+  // The coach surfaced LITERALLY nothing readable — no fixes/strengths/notes/
+  // can't-see, no summary, no per-stroke read. That's a too-hard angle, not a clean
+  // bill of health: never dress it up as "your basics look solid".
+  const readNothing =
+    !verdict.fixes.length &&
+    !verdict.strengths.length &&
+    !verdict.notes.length &&
+    !verdict.cantSee.length &&
+    !summary &&
+    !cycles.some((c) => c.coachedCount > 0);
 
   return (
     <div className="space-y-6">
@@ -426,6 +436,14 @@ function ResultBody({
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                 We couldn&apos;t finish the full read this time — what we did
                 surface is below. Re-run (free) for the complete coaching.
+              </div>
+            ) : readNothing ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                We couldn&apos;t get a clear read of this clip — the camera angle
+                or clarity made the stroke hard to make out, so we&apos;d rather
+                say so than guess. For a real read, film a{" "}
+                <strong>side-on, single-swimmer</strong> clip at about water
+                level, then re-run (it&apos;s free).
               </div>
             ) : (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
