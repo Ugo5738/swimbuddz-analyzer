@@ -147,6 +147,16 @@ export type PublicDirectUpload = {
   expires_in: number;
 };
 
+export type PublicUploadStage =
+  | "preparing"
+  | "uploading"
+  | "finalizing";
+
+export type PublicUploadCallbacks = {
+  onProgress?: (percent: number) => void;
+  onStage?: (stage: PublicUploadStage) => void;
+};
+
 export type InspectStatus = {
   aspect: string;
   instance_id: number;
@@ -222,8 +232,10 @@ export async function createPublicAnalysis(
   file: File,
   guestEmail: string,
   discipline: Discipline = "general",
-  onUploadProgress?: (percent: number) => void,
+  callbacks?: PublicUploadCallbacks | ((percent: number) => void),
 ): Promise<PublicAnalysisJob> {
+  const uploadCallbacks =
+    typeof callbacks === "function" ? { onProgress: callbacks } : callbacks;
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ApiError(
       413,
@@ -233,8 +245,11 @@ export async function createPublicAnalysis(
     );
   }
   try {
+    uploadCallbacks?.onStage?.("preparing");
     const upload = await createDirectUpload(file, guestEmail, discipline);
-    await putDirectUpload(file, upload, onUploadProgress);
+    uploadCallbacks?.onStage?.("uploading");
+    await putDirectUpload(file, upload, uploadCallbacks?.onProgress);
+    uploadCallbacks?.onStage?.("finalizing");
     const resp = await fetch(
       `${API_BASE_URL}/api/v1/ai/public/analyze/${upload.job_id}/complete-upload?guest_token=${encodeURIComponent(upload.guest_token)}`,
       { method: "POST", cache: "no-store" },
