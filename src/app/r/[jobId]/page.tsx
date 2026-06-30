@@ -378,6 +378,10 @@ function ResultBody({
   // the read is PARTIAL — never present that as a clean "nothing to fix".
   const coachErrored =
     coach?.results.some((c) => c.component !== "gate" && c.error) ?? false;
+  const aiCoachRetry =
+    (coach?.meta?.ai_coach_retry as
+      | { status?: string; next_retry_at?: string; message?: string }
+      | undefined) ?? null;
   // The coach surfaced LITERALLY nothing readable — no fixes/strengths/notes/
   // can't-see, no summary, no per-stroke read. That's a too-hard angle, not a clean
   // bill of health: never dress it up as "your basics look solid".
@@ -388,6 +392,9 @@ function ResultBody({
     !verdict.cantSee.length &&
     !summary &&
     !cycles.some((c) => c.coachedCount > 0);
+  const aiCoachRetrying =
+    isWorking &&
+    (aiCoachRetry?.status === "retrying" || (coachErrored && readNothing));
   const detectedButNoReliableRead =
     readNothing &&
     (coachErrored || (coach?.gate_tier === "clean" && cycles.length > 0));
@@ -410,8 +417,9 @@ function ResultBody({
         {isWorking ? (
           <p className="mt-3 flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-700">
             <Loader2 className="animate-spin" size={16} />
-            Still analyzing — more sections appear as each part finishes.
-            We&apos;ll email you when it&apos;s done.
+            {aiCoachRetrying
+              ? "The AI coach hit a temporary error and is retrying automatically. This page will update when it lands."
+              : "Still analyzing — more sections appear as each part finishes. We'll email you when it's done."}
           </p>
         ) : null}
         {coach?.gate_tier === "borderline" ? (
@@ -463,6 +471,11 @@ function ResultBody({
                 evidenceUrls={evidenceUrls}
                 clip={clip}
               />
+            ) : aiCoachRetrying ? (
+              <div className="rounded-2xl border border-brand-200 bg-brand-50 p-4 text-sm text-brand-800">
+                We detected your strokes. The AI coach is retrying automatically,
+                so the full coaching read should appear here when it lands.
+              </div>
             ) : detectedButNoReliableRead ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                 We detected your strokes, but the AI coach did not finish a
