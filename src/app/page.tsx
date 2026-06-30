@@ -22,6 +22,7 @@ import {
   MAX_DURATION_SECONDS,
   PRODUCTS,
   type PublicAnalysisJob,
+  type PublicUploadStage,
   readVideoDuration,
   redeemLicense,
 } from "@/lib/publicAnalyzer";
@@ -36,6 +37,13 @@ const DISCIPLINES: { value: Discipline; label: string; hint: string }[] = [
 type Phase = "idle" | "working" | "queued" | "paywall" | "error";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const COMPRESSED_DURATION_TOLERANCE_SECONDS = 8;
+
+const UPLOAD_STAGE_COPY: Record<PublicUploadStage, string> = {
+  preparing: "Preparing secure upload…",
+  uploading: "Uploading to storage…",
+  finalizing: "Finalizing upload…",
+};
 
 function storeToken(jobId: string, token: string) {
   try {
@@ -60,34 +68,55 @@ export default function Home() {
       setPhase("working");
       setError("");
       try {
-        setBusyMsg("Checking your clip…");
-        let duration = 0;
+        setBusyMsg("Reading video…");
+        let originalDuration = 0;
         try {
-          duration = await readVideoDuration(file);
+          originalDuration = await readVideoDuration(file);
         } catch {
           /* non-fatal — the worker re-checks */
         }
-        if (duration && duration > MAX_DURATION_SECONDS) {
-          setPhase("error");
-          setError(
-            `That clip is ${Math.round(duration)}s — please trim it to ${MAX_DURATION_SECONDS}s or less of a single length.`,
-          );
-          return;
+
+        let uploadFile = file;
+        if (!originalDuration || originalDuration <= MAX_DURATION_SECONDS) {
+          setBusyMsg("Optimizing video…");
+          setProgress(0);
+          const compressed = await compressVideoForUpload(file, {
+            onProgress: (f) => setProgress(Math.round(f * 100)),
+          });
+          uploadFile = compressed.file;
+
+          if (!compressed.skipped && originalDuration > 0) {
+            setBusyMsg("Checking optimized video…");
+            try {
+              const compressedDuration = await readVideoDuration(compressed.file);
+              const maxExpected = Math.max(
+                originalDuration + COMPRESSED_DURATION_TOLERANCE_SECONDS,
+                originalDuration * 1.25,
+              );
+              const minExpected = Math.max(1, originalDuration * 0.75);
+              if (
+                !compressedDuration ||
+                compressedDuration > maxExpected ||
+                compressedDuration < minExpected
+              ) {
+                uploadFile = file;
+              }
+            } catch {
+              uploadFile = file;
+            }
+          }
         }
 
-        setBusyMsg("Optimizing your video on this device…");
-        setProgress(0);
-        const compressed = await compressVideoForUpload(file, {
-          onProgress: (f) => setProgress(Math.round(f * 100)),
-        });
-
-        setBusyMsg("Uploading…");
+        setBusyMsg("Uploading to storage…");
         setProgress(0);
         const result = await createPublicAnalysis(
-          compressed.file,
+          uploadFile,
           emailValue,
           disc,
-          setProgress,
+          {
+            onProgress: setProgress,
+            onStage: (stage) => setBusyMsg(UPLOAD_STAGE_COPY[stage]),
+          },
         );
         storeToken(result.job_id, result.guest_token);
         trackAnalysisStarted({ discipline: disc });
@@ -159,7 +188,7 @@ export default function Home() {
           Get an instant AI breakdown of your freestyle.
         </h1>
         <p className="mt-3 text-slate-600">
-          Upload a short, side-on clip. We read your technique like a coach —
+          Upload a side-on clip. We read your technique like a coach —
           your <strong>body line</strong>, <strong>recovery</strong>,{" "}
           <strong>head &amp; breathing</strong> and <strong>entry</strong> —
           flag what to work on, and suggest drills. Your{" "}
@@ -207,9 +236,8 @@ export default function Home() {
               className="block w-full cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-white"
             />
             <p className="mt-1 text-xs text-slate-400">
-              For best results: film side-on with the swimmer in frame, 10–90
-              seconds long. Large clips are compressed on your device first, so
-              they upload fast.
+              Film side-on with the swimmer in frame. Short clips analyze
+              fastest; longer clips are stored and read from a focused window.
             </p>
           </div>
 

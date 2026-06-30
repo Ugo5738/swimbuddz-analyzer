@@ -31,6 +31,10 @@ export type CompressOptions = {
   videoBitsPerSecond?: number;
   /** Files already this small skip compression (avoids needless quality loss). */
   skipIfUnderBytes?: number;
+  /** Stop recording if browser-side encoding runs far slower than playback. */
+  maxWallClockMultiplier?: number;
+  /** Absolute cap for one compression attempt. */
+  maxWallClockSeconds?: number;
   /** 0..1 progress while recording. */
   onProgress?: (fraction: number) => void;
 };
@@ -39,6 +43,8 @@ const DEFAULTS = {
   maxLongSide: 1920,
   videoBitsPerSecond: 4_000_000,
   skipIfUnderBytes: 8 * 1024 * 1024,
+  maxWallClockMultiplier: 1.75,
+  maxWallClockSeconds: 90,
 };
 
 function pickMime(): { recorderMime: string; baseMime: string } | null {
@@ -144,11 +150,13 @@ function runCompression(
 
     let recorder: MediaRecorder | null = null;
     let rafId = 0;
+    let timeoutId = 0;
     let settled = false;
     const chunks: BlobPart[] = [];
 
     const cleanup = () => {
       cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
       URL.revokeObjectURL(url);
       video.removeAttribute("src");
       try {
@@ -213,6 +221,26 @@ function runCompression(
       recorder.onerror = () => fail(new Error("Recorder error"));
 
       const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      const timeoutSeconds = Math.min(
+        opts.maxWallClockSeconds ?? DEFAULTS.maxWallClockSeconds,
+        duration > 0
+          ? Math.max(
+              20,
+              duration *
+                (opts.maxWallClockMultiplier ??
+                  DEFAULTS.maxWallClockMultiplier) +
+                8,
+            )
+          : opts.maxWallClockSeconds ?? DEFAULTS.maxWallClockSeconds,
+      );
+      timeoutId = window.setTimeout(() => {
+        try {
+          if (recorder?.state === "recording") recorder.stop();
+        } catch {
+          /* ignore */
+        }
+        fail(new Error("compression-timeout"));
+      }, timeoutSeconds * 1000);
 
       const drawLoop = () => {
         if (settled) return;
