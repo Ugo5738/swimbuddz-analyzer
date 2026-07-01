@@ -329,6 +329,17 @@ function ResultBody({
   const coach = r?.coach_result ?? null;
   const isWorking =
     detail.status === "pending" || detail.status === "processing";
+  const aiCoachRetry =
+    (coach?.meta?.ai_coach_retry as
+      | {
+          status?: string;
+          attempt?: number;
+          max_attempts?: number;
+          next_retry_at?: string;
+          message?: string;
+        }
+      | undefined) ?? null;
+  const retryingCoach = isWorking && aiCoachRetry?.status === "retrying";
   // Progressive rendering: the worker persists a partial result after each stage,
   // so once any analysis stage has landed we render what's ready (and keep polling
   // for the rest) instead of a blank "analyzing" wait.
@@ -340,10 +351,16 @@ function ResultBody({
       <Centered>
         <Loader2 className="animate-spin text-brand-600" size={32} />
         <p className="mt-3 font-medium">
-          {detail.status === "processing" ? "Analyzing your stroke…" : "Queued"}
+          {retryingCoach
+            ? "The AI coach is busy — retrying automatically"
+            : detail.status === "processing"
+              ? "Analyzing your stroke…"
+              : "Queued"}
         </p>
         <p className="mt-1 text-sm text-slate-500">
-          We&apos;ll email you when it&apos;s ready.
+          {retryingCoach
+            ? "Keep this page open or check your email when the read lands."
+            : "We'll email you when it's ready."}
         </p>
       </Centered>
     );
@@ -378,10 +395,6 @@ function ResultBody({
   // the read is PARTIAL — never present that as a clean "nothing to fix".
   const coachErrored =
     coach?.results.some((c) => c.component !== "gate" && c.error) ?? false;
-  const aiCoachRetry =
-    (coach?.meta?.ai_coach_retry as
-      | { status?: string; next_retry_at?: string; message?: string }
-      | undefined) ?? null;
   // The coach surfaced LITERALLY nothing readable — no fixes/strengths/notes/
   // can't-see, no summary, no per-stroke read. That's a too-hard angle, not a clean
   // bill of health: never dress it up as "your basics look solid".
@@ -394,7 +407,7 @@ function ResultBody({
     !cycles.some((c) => c.coachedCount > 0);
   const aiCoachRetrying =
     isWorking &&
-    (aiCoachRetry?.status === "retrying" || (coachErrored && readNothing));
+    (retryingCoach || (coachErrored && readNothing));
   const detectedButNoReliableRead =
     readNothing &&
     (coachErrored || (coach?.gate_tier === "clean" && cycles.length > 0));
