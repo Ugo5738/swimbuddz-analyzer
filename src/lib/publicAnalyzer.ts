@@ -13,7 +13,8 @@ export type AnalysisJobStatus =
 
 // The swimmer's goal. Steers how the coach prioritises + frames feedback (a long
 // front-quad glide is efficiency for distance, a dead-spot for sprint), never what
-// it perceives. Mirrors DISCIPLINES in services/ai_service/pipeline/types.py.
+// it perceives. The public UI currently defaults to distance while sprint is
+// disabled/coming soon. Mirrors DISCIPLINES in services/ai_service/pipeline/types.py.
 export type Discipline = "sprint" | "distance" | "general";
 
 export type DrillSuggestion = {
@@ -231,7 +232,7 @@ async function toError(resp: Response): Promise<ApiError> {
 export async function createPublicAnalysis(
   file: File,
   guestEmail: string,
-  discipline: Discipline = "general",
+  discipline: Discipline = "distance",
   callbacks?: PublicUploadCallbacks | ((percent: number) => void),
 ): Promise<PublicAnalysisJob> {
   const uploadCallbacks =

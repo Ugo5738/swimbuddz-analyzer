@@ -28,10 +28,25 @@ import {
 } from "@/lib/publicAnalyzer";
 import { compressVideoForUpload } from "@/lib/videoCompress";
 
-const DISCIPLINES: { value: Discipline; label: string; hint: string }[] = [
-  { value: "general", label: "General", hint: "All-round clean technique" },
-  { value: "sprint", label: "Sprint", hint: "Short & fast — power, tempo" },
-  { value: "distance", label: "Distance", hint: "Efficient over many lengths" },
+const DISCIPLINES: {
+  value: Discipline;
+  label: string;
+  hint: string;
+  disabled?: boolean;
+  badge?: string;
+}[] = [
+  {
+    value: "distance",
+    label: "Distance",
+    hint: "TI-informed efficiency over many lengths",
+  },
+  {
+    value: "sprint",
+    label: "Sprint",
+    hint: "Short & fast power analysis",
+    disabled: true,
+    badge: "Coming soon",
+  },
 ];
 
 type Phase = "idle" | "working" | "queued" | "paywall" | "error";
@@ -55,7 +70,7 @@ function storeToken(jobId: string, token: string) {
 
 export default function Home() {
   const [email, setEmail] = useState("");
-  const [discipline, setDiscipline] = useState<Discipline>("general");
+  const [discipline, setDiscipline] = useState<Discipline>("distance");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [busyMsg, setBusyMsg] = useState("");
@@ -245,20 +260,33 @@ export default function Home() {
             <label className="mb-1 block text-sm font-medium">
               What are you training for?
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {DISCIPLINES.map((d) => (
                 <button
                   key={d.value}
                   type="button"
-                  onClick={() => setDiscipline(d.value)}
+                  disabled={d.disabled}
+                  onClick={() => {
+                    if (!d.disabled) setDiscipline(d.value);
+                  }}
                   aria-pressed={discipline === d.value}
+                  aria-disabled={d.disabled}
                   className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
-                    discipline === d.value
+                    d.disabled
+                      ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                      : discipline === d.value
                       ? "border-brand-600 bg-brand-50 text-brand-700"
                       : "border-slate-300 text-slate-600 hover:border-slate-400"
                   }`}
                 >
-                  <span className="block font-medium">{d.label}</span>
+                  <span className="flex items-center justify-between gap-2 font-medium">
+                    <span>{d.label}</span>
+                    {d.badge ? (
+                      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        {d.badge}
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="mt-0.5 block text-xs text-slate-400">
                     {d.hint}
                   </span>
@@ -266,8 +294,8 @@ export default function Home() {
               ))}
             </div>
             <p className="mt-1 text-xs text-slate-400">
-              We tailor the feedback to your goal — sprinters and distance
-              swimmers get different priorities.
+              Right now, analysis uses our TI-informed distance and efficiency
+              model. Sprint analysis will come later.
             </p>
           </div>
 
