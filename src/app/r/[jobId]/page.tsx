@@ -590,6 +590,36 @@ function ChunkPlayer({
   const dur = Math.max(0.1, win.end - win.start);
   const frac = Math.max(0, Math.min(1, (cur - win.start) / dur));
 
+  const syncWindow = useCallback(
+    (video?: HTMLVideoElement | null) => {
+      const start = Math.max(0, t - half);
+      const rawEnd = t + half;
+      const videoDuration =
+        video && Number.isFinite(video.duration) && video.duration > 0
+          ? video.duration
+          : null;
+      const end = Math.max(
+        start + 0.1,
+        videoDuration === null ? rawEnd : Math.min(videoDuration, rawEnd),
+      );
+      setWin({ start, end });
+      setCur(start);
+      if (video) {
+        try {
+          video.currentTime = start;
+        } catch {
+          // Some browsers reject seeks before metadata is ready; onLoadedMetadata
+          // runs this same sync again.
+        }
+      }
+    },
+    [half, t],
+  );
+
+  useEffect(() => {
+    syncWindow(vref.current);
+  }, [clip, syncWindow]);
+
   const seekToClientX = (clientX: number) => {
     const v = vref.current;
     const bar = barRef.current;
@@ -625,12 +655,7 @@ function ChunkPlayer({
         preload="metadata"
         onClick={toggle}
         onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          const start = Math.max(0, t - half);
-          const end = Math.min(v.duration || t + half, t + half);
-          setWin({ start, end });
-          v.currentTime = start;
-          setCur(start);
+          syncWindow(e.currentTarget);
         }}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
@@ -1073,7 +1098,9 @@ function StrokeByStroke({
           size={16}
           className={`transition ${show ? "rotate-180" : ""}`}
         />
-        {show ? "Hide stroke-by-stroke evidence" : "See it stroke by stroke"}
+        {show
+          ? "Hide stroke-by-stroke analysis"
+          : "See stroke-by-stroke analysis"}
       </button>
       {show ? (
         <div className="mt-2">
@@ -1117,8 +1144,8 @@ function CycleSpine({
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <p className="font-semibold">Your strokes, one by one</p>
       <p className="mb-3 text-xs text-slate-500">
-        ~{hedged ?? cycles.length} over-water recoveries (approximate). The
-        first few are coached for you; tap any other to coach it too.
+        ~{hedged ?? cycles.length} over-water recoveries (approximate). Selected
+        strokes are coached for you; tap any other to coach it too.
       </p>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -1262,7 +1289,7 @@ function CycleDetail({
         <div className="space-y-2">
           {reads.map((sr) => (
             <FindingCard
-              key={sr.aspect}
+              key={`${cycle.id}:${sr.aspect}`}
               f={sr.finding as CoachFinding}
               label={sr.label}
               evidenceUrls={evidenceUrls}
