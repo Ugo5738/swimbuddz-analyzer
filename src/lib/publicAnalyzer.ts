@@ -172,8 +172,9 @@ export type InspectStatus = {
 };
 
 // ─── Constants ────────────────────────────────────────────────────────
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // matches the backend member cap
-export const MAX_DURATION_SECONDS = 90; // client fast-fail; worker hard cap is 120s
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // public direct-upload cap
+export const MAX_UPLOAD_LABEL = "2 GB";
+export const MAX_DURATION_SECONDS = 90; // browser compression window; worker reads 120s
 export const ACCEPTED_VIDEO_MIME =
   "video/mp4,video/quicktime,video/x-m4v,video/webm";
 
@@ -228,6 +229,12 @@ async function toError(resp: Response): Promise<ApiError> {
   return new ApiError(resp.status, message, reason);
 }
 
+function fmtFileSize(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────
 export async function createPublicAnalysis(
   file: File,
@@ -240,9 +247,7 @@ export async function createPublicAnalysis(
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ApiError(
       413,
-      `Video is ${(file.size / 1024 / 1024).toFixed(1)} MB — limit is ${
-        MAX_UPLOAD_BYTES / 1024 / 1024
-      } MB.`,
+      `Video is ${fmtFileSize(file.size)} — limit is ${MAX_UPLOAD_LABEL}.`,
     );
   }
   try {

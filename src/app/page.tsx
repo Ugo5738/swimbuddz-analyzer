@@ -20,6 +20,7 @@ import {
   getCredits,
   GUMROAD_CHECKOUT_BASE,
   MAX_DURATION_SECONDS,
+  MAX_UPLOAD_LABEL,
   PRODUCTS,
   type PublicAnalysisJob,
   type PublicUploadStage,
@@ -251,8 +252,9 @@ export default function Home() {
               className="block w-full cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-white"
             />
             <p className="mt-1 text-xs text-slate-400">
-              Film side-on with the swimmer in frame. Short clips analyze
-              fastest; longer clips are stored and read from a focused window.
+              Film side-on with the swimmer in frame. Uploads up to{" "}
+              {MAX_UPLOAD_LABEL} are accepted; longer clips are read from a
+              focused window.
             </p>
           </div>
 
