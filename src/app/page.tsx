@@ -17,7 +17,6 @@ import {
   ApiError,
   createPublicAnalysis,
   type Discipline,
-  getCredits,
   GUMROAD_CHECKOUT_BASE,
   MAX_DURATION_SECONDS,
   MAX_UPLOAD_LABEL,
@@ -416,19 +415,10 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
 
   const refresh = useCallback(async () => {
     setMsg("");
-    try {
-      const c = await getCredits(email);
-      if (c.remaining_credits > 0) {
-        onReady();
-      } else {
-        setMsg(
-          "No credits found yet. If you just bought, give it a few seconds.",
-        );
-      }
-    } catch {
-      setMsg("Couldn't check your balance — try again.");
-    }
-  }, [email, onReady]);
+    // Credit ownership is verified by the backend when the upload resumes.
+    // Never query a stranger's paid-credit balance by email alone.
+    onReady();
+  }, [onReady]);
 
   const redeem = useCallback(async () => {
     setRedeeming(true);
