@@ -1543,10 +1543,9 @@ function RefusalCard({
 
 function ShareRead({ topFix }: { topFix: string | null }) {
   const onShare = async () => {
-    const url =
-      typeof window !== "undefined"
-        ? window.location.href
-        : "https://analyzer.swimbuddz.com";
+    // Private result URLs carry a bearer guest_token: never put that secret
+    // into a social share payload. Send friends to the public analyzer instead.
+    const url = "https://analyzer.swimbuddz.com";
     const text = topFix
       ? `I just got my freestyle stroke analysed by SwimBuddz Stroke Lab — my #1 fix: "${topFix}" Get your free stroke read:`
       : "I just got my freestyle stroke analysed by SwimBuddz Stroke Lab. Get your free stroke read:";
