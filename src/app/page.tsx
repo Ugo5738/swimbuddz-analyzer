@@ -82,7 +82,7 @@ export default function Home() {
   const fileRef = useRef<File | null>(null);
 
   const run = useCallback(
-    async (file: File, emailValue: string, disc: Discipline) => {
+    async (file: File, emailValue: string, disc: Discipline, verifiedToken?: string) => {
       setPhase("working");
       setError("");
       try {
@@ -127,9 +127,13 @@ export default function Home() {
 
         setBusyMsg("Uploading to storage…");
         setProgress(0);
-        const proof = typeof window === "undefined"
-          ? undefined
-          : sessionStorage.getItem(`sbz_strokelab_verified_${emailValue}`) || undefined;
+        let cachedProof: string | undefined;
+        try {
+          cachedProof = sessionStorage.getItem(`sbz_strokelab_verified_${emailValue}`) || undefined;
+        } catch {
+          // Private browsing can block web storage; the in-memory proof works.
+        }
+        const proof = verifiedToken || cachedProof;
         const result = await createPublicAnalysis(
           uploadFile,
           emailValue,
@@ -198,8 +202,12 @@ export default function Home() {
       <EmailVerification
         email={email}
         onVerified={(proof) => {
-          sessionStorage.setItem(`sbz_strokelab_verified_${email}`, proof);
-          if (fileRef.current) void run(fileRef.current, email, discipline);
+          try {
+            sessionStorage.setItem(`sbz_strokelab_verified_${email}`, proof);
+          } catch {
+            // A blocked storage API must not strand a verified customer.
+          }
+          if (fileRef.current) void run(fileRef.current, email, discipline, proof);
         }}
         onCancel={reset}
       />
