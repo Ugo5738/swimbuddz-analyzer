@@ -566,10 +566,10 @@ function EmailVerification({
   };
   return (
     <section className="mx-auto max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6">
-      <h2 className="text-xl font-bold">Verify your email to use paid analyses</h2>
+      <h2 className="text-xl font-bold">Verify your email to get your stroke review</h2>
       <p className="text-sm text-slate-600">
-        Credits belong to the owner of <strong>{email}</strong>. Enter the code we
-        send there to continue with your video.
+        We'll send your private analysis to <strong>{email}</strong>.
+        Verify this address once to protect your video and analysis credits.
       </p>
       <button type="button" disabled={busy} onClick={() => void send()}
         className="w-full rounded-lg border border-brand-600 px-4 py-2 text-brand-700 disabled:opacity-60">
