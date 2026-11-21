@@ -73,6 +73,7 @@ function storeToken(jobId: string, token: string) {
 export default function Home() {
   const [email, setEmail] = useState("");
   const [discipline, setDiscipline] = useState<Discipline>("distance");
+  const [compressBeforeUpload, setCompressBeforeUpload] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [busyMsg, setBusyMsg] = useState("");
@@ -81,7 +82,7 @@ export default function Home() {
   const fileRef = useRef<File | null>(null);
 
   const run = useCallback(
-    async (file: File, emailValue: string, disc: Discipline) => {
+    async (file: File, emailValue: string, disc: Discipline, verifiedToken?: string) => {
       setPhase("working");
       setError("");
       try {
@@ -94,7 +95,7 @@ export default function Home() {
         }
 
         let uploadFile = file;
-        if (!originalDuration || originalDuration <= MAX_DURATION_SECONDS) {
+        if (compressBeforeUpload && (!originalDuration || originalDuration <= MAX_DURATION_SECONDS)) {
           setBusyMsg("Optimizing video…");
           setProgress(0);
           const compressed = await compressVideoForUpload(file, {
@@ -126,9 +127,13 @@ export default function Home() {
 
         setBusyMsg("Uploading to storage…");
         setProgress(0);
-        const proof = typeof window === "undefined"
-          ? undefined
-          : sessionStorage.getItem(`sbz_strokelab_verified_${emailValue}`) || undefined;
+        let cachedProof: string | undefined;
+        try {
+          cachedProof = sessionStorage.getItem(`sbz_strokelab_verified_${emailValue}`) || undefined;
+        } catch {
+          // Private browsing can block web storage; the in-memory proof works.
+        }
+        const proof = verifiedToken || cachedProof;
         const result = await createPublicAnalysis(
           uploadFile,
           emailValue,
@@ -160,7 +165,7 @@ export default function Home() {
         );
       }
     },
-    [],
+    [compressBeforeUpload],
   );
 
   const onSubmit = useCallback(
@@ -197,8 +202,12 @@ export default function Home() {
       <EmailVerification
         email={email}
         onVerified={(proof) => {
-          sessionStorage.setItem(`sbz_strokelab_verified_${email}`, proof);
-          if (fileRef.current) void run(fileRef.current, email, discipline);
+          try {
+            sessionStorage.setItem(`sbz_strokelab_verified_${email}`, proof);
+          } catch {
+            // A blocked storage API must not strand a verified customer.
+          }
+          if (fileRef.current) void run(fileRef.current, email, discipline, proof);
         }}
         onCancel={reset}
       />
@@ -272,10 +281,19 @@ export default function Home() {
               className="block w-full cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-white"
             />
             <p className="mt-1 text-xs text-slate-400">
-              Film side-on with the swimmer in frame. Uploads up to{" "}
-              {MAX_UPLOAD_LABEL} are accepted; longer clips are read from a
-              focused window.
+              Film side-on with the swimmer in frame. Up to {MAX_UPLOAD_LABEL}
+              can go directly to private S3. Only the first two minutes are analyzed.
             </p>
+            <label className="mt-3 flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={compressBeforeUpload}
+                onChange={(e) => setCompressBeforeUpload(e.target.checked)}
+                className="mt-1"
+              />
+              Reduce mobile data usage by compressing before upload.
+              Leave unchecked to preserve your original iPhone video quality.
+            </label>
           </div>
 
           <div>
@@ -556,10 +574,10 @@ function EmailVerification({
   };
   return (
     <section className="mx-auto max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6">
-      <h2 className="text-xl font-bold">Verify your email to use paid analyses</h2>
+      <h2 className="text-xl font-bold">Verify your email to get your stroke review</h2>
       <p className="text-sm text-slate-600">
-        Credits belong to the owner of <strong>{email}</strong>. Enter the code we
-        send there to continue with your video.
+        We'll send your private analysis to <strong>{email}</strong>.
+        Verify this address once to protect your video and analysis credits.
       </p>
       <button type="button" disabled={busy} onClick={() => void send()}
         className="w-full rounded-lg border border-brand-600 px-4 py-2 text-brand-700 disabled:opacity-60">
