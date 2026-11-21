@@ -172,8 +172,8 @@ export type InspectStatus = {
 };
 
 // ─── Constants ────────────────────────────────────────────────────────
-export const MAX_UPLOAD_BYTES = 250 * 1024 * 1024; // public direct-upload cap
-export const MAX_UPLOAD_LABEL = "250 MB";
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // direct S3 PUT only
+export const MAX_UPLOAD_LABEL = "2 GB";
 export const MAX_DURATION_SECONDS = 90; // browser compression window; worker reads 120s
 export const ACCEPTED_VIDEO_MIME =
   "video/mp4,video/quicktime,video/x-m4v,video/webm";
@@ -273,6 +273,14 @@ export async function createPublicAnalysis(
       e instanceof ApiError &&
       (e.status === 404 || e.status === 405 || e.status === 501)
     ) {
+      // Never fall back to a 50 MiB API-buffered multipart endpoint for a
+      // high-resolution file accepted by the direct-to-S3 flow.
+      if (file.size > 50 * 1024 * 1024) {
+        throw new ApiError(
+          503,
+          "Direct video upload is temporarily unavailable. Please try again later.",
+        );
+      }
       return createMultipartPublicAnalysis(file, guestEmail, discipline, emailAuthToken);
     }
     throw e;
