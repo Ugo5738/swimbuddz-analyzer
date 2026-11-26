@@ -72,6 +72,50 @@ export type CoachResult = {
   meta: Record<string, unknown>;
 };
 
+export type StrokeSupport = {
+  count: number;
+  total_chunks: number;
+  consistent: boolean;
+  single_stroke_only: boolean;
+};
+
+export type StrokeAdjudication = {
+  status: "confirmed" | "contradicted" | "unclear" | string;
+  model?: string;
+  confidence?: number;
+  reason?: string;
+};
+
+export type SwimComparisonAspect = {
+  aspect: string;
+  label: string;
+  status:
+    | "improved"
+    | "still_working"
+    | "maintained"
+    | "regressed"
+    | "newly_observed"
+    | string;
+  previous_severity: string | null;
+  current_severity: string | null;
+  previous_verdict: string | null;
+  current_verdict: string | null;
+  summary: string;
+};
+
+export type SwimComparison = {
+  previous_job_id: string;
+  previous_completed_at: string | null;
+  comparable: boolean;
+  improved_count: number;
+  still_working_count: number;
+  maintained_count: number;
+  regressed_count: number;
+  headline: string;
+  caveat: string | null;
+  aspects: SwimComparisonAspect[];
+};
+
 // One segmented phase instance (a recovery / entry / glide / breath chunk). The
 // backend exposes a whitelisted projection only when the per-stroke drilldown is
 // unlocked; null otherwise. Powers the recovery browser.
