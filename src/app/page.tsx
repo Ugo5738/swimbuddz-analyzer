@@ -17,7 +17,6 @@ import {
   ApiError,
   createPublicAnalysis,
   type Discipline,
-  getCredits,
   GUMROAD_CHECKOUT_BASE,
   MAX_DURATION_SECONDS,
   MAX_UPLOAD_LABEL,
@@ -26,6 +25,8 @@ import {
   type PublicUploadStage,
   readVideoDuration,
   redeemLicense,
+  requestEmailVerification,
+  verifyEmailCode,
 } from "@/lib/publicAnalyzer";
 import { compressVideoForUpload } from "@/lib/videoCompress";
 
@@ -50,7 +51,7 @@ const DISCIPLINES: {
   },
 ];
 
-type Phase = "idle" | "working" | "queued" | "paywall" | "error";
+type Phase = "idle" | "working" | "queued" | "paywall" | "verify" | "error";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const COMPRESSED_DURATION_TOLERANCE_SECONDS = 8;
@@ -72,6 +73,7 @@ function storeToken(jobId: string, token: string) {
 export default function Home() {
   const [email, setEmail] = useState("");
   const [discipline, setDiscipline] = useState<Discipline>("distance");
+  const [compressBeforeUpload, setCompressBeforeUpload] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [busyMsg, setBusyMsg] = useState("");
@@ -80,7 +82,7 @@ export default function Home() {
   const fileRef = useRef<File | null>(null);
 
   const run = useCallback(
-    async (file: File, emailValue: string, disc: Discipline) => {
+    async (file: File, emailValue: string, disc: Discipline, verifiedToken?: string) => {
       setPhase("working");
       setError("");
       try {
@@ -93,7 +95,7 @@ export default function Home() {
         }
 
         let uploadFile = file;
-        if (!originalDuration || originalDuration <= MAX_DURATION_SECONDS) {
+        if (compressBeforeUpload && (!originalDuration || originalDuration <= MAX_DURATION_SECONDS)) {
           setBusyMsg("Optimizing video…");
           setProgress(0);
           const compressed = await compressVideoForUpload(file, {
@@ -125,6 +127,13 @@ export default function Home() {
 
         setBusyMsg("Uploading to storage…");
         setProgress(0);
+        let cachedProof: string | undefined;
+        try {
+          cachedProof = sessionStorage.getItem(`sbz_strokelab_verified_${emailValue}`) || undefined;
+        } catch {
+          // Private browsing can block web storage; the in-memory proof works.
+        }
+        const proof = verifiedToken || cachedProof;
         const result = await createPublicAnalysis(
           uploadFile,
           emailValue,
@@ -133,12 +142,17 @@ export default function Home() {
             onProgress: setProgress,
             onStage: (stage) => setBusyMsg(UPLOAD_STAGE_COPY[stage]),
           },
+          proof,
         );
         storeToken(result.job_id, result.guest_token);
         trackAnalysisStarted({ discipline: disc });
         setJob(result);
         setPhase("queued");
       } catch (e) {
+        if (e instanceof ApiError && e.status === 403 && e.reason === "email_verification_required") {
+          setPhase("verify");
+          return;
+        }
         if (e instanceof ApiError && e.status === 402) {
           setPhase("paywall");
           return;
@@ -151,7 +165,7 @@ export default function Home() {
         );
       }
     },
-    [],
+    [compressBeforeUpload],
   );
 
   const onSubmit = useCallback(
@@ -183,6 +197,21 @@ export default function Home() {
 
   if (phase === "queued" && job)
     return <Queued email={email} job={job} onReset={reset} />;
+  if (phase === "verify")
+    return (
+      <EmailVerification
+        email={email}
+        onVerified={(proof) => {
+          try {
+            sessionStorage.setItem(`sbz_strokelab_verified_${email}`, proof);
+          } catch {
+            // A blocked storage API must not strand a verified customer.
+          }
+          if (fileRef.current) void run(fileRef.current, email, discipline, proof);
+        }}
+        onCancel={reset}
+      />
+    );
   if (phase === "paywall")
     return (
       <Paywall
@@ -252,10 +281,19 @@ export default function Home() {
               className="block w-full cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-white"
             />
             <p className="mt-1 text-xs text-slate-400">
-              Film side-on with the swimmer in frame. Uploads up to{" "}
-              {MAX_UPLOAD_LABEL} are accepted; longer clips are read from a
-              focused window.
+              Film side-on with the swimmer in frame. Up to {MAX_UPLOAD_LABEL}
+              can go directly to private S3. Only the first two minutes are analyzed.
             </p>
+            <label className="mt-3 flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={compressBeforeUpload}
+                onChange={(e) => setCompressBeforeUpload(e.target.checked)}
+                className="mt-1"
+              />
+              Reduce mobile data usage by compressing before upload.
+              Leave unchecked to preserve your original iPhone video quality.
+            </label>
           </div>
 
           <div>
@@ -395,19 +433,10 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
 
   const refresh = useCallback(async () => {
     setMsg("");
-    try {
-      const c = await getCredits(email);
-      if (c.remaining_credits > 0) {
-        onReady();
-      } else {
-        setMsg(
-          "No credits found yet. If you just bought, give it a few seconds.",
-        );
-      }
-    } catch {
-      setMsg("Couldn't check your balance — try again.");
-    }
-  }, [email, onReady]);
+    // Credit ownership is verified by the backend when the upload resumes.
+    // Never query a stranger's paid-credit balance by email alone.
+    onReady();
+  }, [onReady]);
 
   const redeem = useCallback(async () => {
     setRedeeming(true);
@@ -504,5 +533,68 @@ function Paywall({ email, onReady }: { email: string; onReady: () => void }) {
 
       {msg ? <p className="text-center text-sm text-rose-600">{msg}</p> : null}
     </div>
+  );
+}
+
+function EmailVerification({
+  email,
+  onVerified,
+  onCancel,
+}: {
+  email: string;
+  onVerified: (proof: string) => void;
+  onCancel: () => void;
+}) {
+  const [code, setCode] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      await requestEmailVerification(email);
+      setStatus("We sent a six-digit code to your email. It expires in 10 minutes.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Could not send code.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const check = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const token = await verifyEmailCode(email, code.trim());
+      onVerified(token);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Incorrect or expired code.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="mx-auto max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6">
+      <h2 className="text-xl font-bold">Verify your email to get your stroke review</h2>
+      <p className="text-sm text-slate-600">
+        We'll send your private analysis to <strong>{email}</strong>.
+        Verify this address once to protect your video and analysis credits.
+      </p>
+      <button type="button" disabled={busy} onClick={() => void send()}
+        className="w-full rounded-lg border border-brand-600 px-4 py-2 text-brand-700 disabled:opacity-60">
+        Send verification code
+      </button>
+      <label className="block text-sm font-medium" htmlFor="verification-code">Six-digit code</label>
+      <input id="verification-code" autoComplete="one-time-code" inputMode="numeric"
+        maxLength={6} value={code} onChange={(e) => setCode(e.target.value)}
+        className="w-full rounded-lg border border-slate-300 p-3" placeholder="123456" />
+      <button type="button" disabled={busy || !/^\d{6}$/.test(code)} onClick={() => void check()}
+        className="w-full rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white disabled:opacity-60">
+        Verify and continue
+      </button>
+      {status && <p role="status" className="text-sm text-slate-600">{status}</p>}
+      <button type="button" onClick={onCancel} className="text-sm text-slate-500 underline">
+        Cancel
+      </button>
+    </section>
   );
 }

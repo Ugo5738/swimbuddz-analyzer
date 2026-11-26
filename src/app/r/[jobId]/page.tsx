@@ -35,10 +35,12 @@ import {
 import {
   buildCycles,
   buildVerdict,
+  coachComparison,
   coachSummary,
   type Cycle,
   cycleThumb,
   defaultOpenCycle,
+  extractFixMeta,
 } from "@/lib/cycles";
 import { DEMO_DETAIL } from "@/lib/demoResult";
 import {
@@ -53,6 +55,7 @@ import {
   PRODUCTS,
   type PublicAnalysisJobDetail,
   retryPublicAnalysis,
+  type SwimComparison,
 } from "@/lib/publicAnalyzer";
 
 const POLL_MS = 15_000;
@@ -391,6 +394,7 @@ function ResultBody({
     : { fixes: [], strengths: [], notes: [], cantSee: [] };
   const topFix = verdict.fixes[0]?.observation ?? null;
   const summary = coach ? coachSummary(detail) : null;
+  const comparison = coach ? coachComparison(detail) : null;
   // A coach component that errored (e.g. the holistic read hit a rate limit) means
   // the read is PARTIAL — never present that as a clean "nothing to fix".
   const coachErrored =
@@ -476,6 +480,10 @@ function ResultBody({
                   below.
                 </p>
               </section>
+            ) : null}
+
+            {comparison ? (
+              <ProgressSinceLastSwim comparison={comparison} />
             ) : null}
 
             {verdict.fixes.length ? (
@@ -936,6 +944,87 @@ function TopFixes({
   );
 }
 
+const COMPARISON_STATUS_STYLES: Record<
+  string,
+  { label: string; badge: string }
+> = {
+  improved: {
+    label: "Improved",
+    badge: "bg-emerald-100 text-emerald-800",
+  },
+  still_working: {
+    label: "Keep focusing",
+    badge: "bg-amber-100 text-amber-800",
+  },
+  maintained: {
+    label: "Consistent strength",
+    badge: "bg-sky-100 text-sky-800",
+  },
+  regressed: {
+    label: "Watch closely",
+    badge: "bg-rose-100 text-rose-800",
+  },
+  newly_observed: {
+    label: "Newly visible",
+    badge: "bg-slate-100 text-slate-700",
+  },
+};
+
+function ProgressSinceLastSwim({
+  comparison,
+}: {
+  comparison: SwimComparison;
+}) {
+  const prevDate = comparison.previous_completed_at
+    ? new Date(comparison.previous_completed_at).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })
+    : null;
+
+  return (
+    <section className="rounded-2xl border border-emerald-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+          Progress since your last swim{prevDate ? ` (${prevDate})` : ""}
+        </p>
+      </div>
+      <p className="mt-1 text-sm font-medium text-slate-900">
+        {comparison.headline}
+      </p>
+      {comparison.caveat ? (
+        <p className="mt-1.5 text-xs text-amber-800">{comparison.caveat}</p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {comparison.aspects.map((item) => {
+          const style = COMPARISON_STATUS_STYLES[item.status] ?? {
+            label: item.status,
+            badge: "bg-slate-100 text-slate-700",
+          };
+          return (
+            <div
+              key={item.aspect}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-800">
+                  {item.label}
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 font-medium ${style.badge}`}
+                >
+                  {style.label}
+                </span>
+              </div>
+              <p className="mt-1 text-slate-600">{item.summary}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function FixCard({
   n,
   f,
@@ -947,12 +1036,7 @@ function FixCard({
   evidenceUrls: Record<string, string> | null;
   clip: string | null;
 }) {
-  const why =
-    typeof f.extra?.why_it_matters === "string"
-      ? (f.extra.why_it_matters as string)
-      : null;
-  const drill =
-    typeof f.extra?.drill === "string" ? (f.extra.drill as string) : null;
+  const meta = extractFixMeta(f);
   const ref = f.evidence_frames[0];
   const key = ref ? `${f.component}:${ref.index}` : null;
   const thumb = key && evidenceUrls ? evidenceUrls[key] : undefined;
@@ -962,8 +1046,30 @@ function FixCard({
         {n}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="font-semibold">{f.observation}</p>
-        {why ? <p className="mt-0.5 text-sm text-slate-600">{why}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-semibold">{f.observation}</p>
+          {meta.strokeSupport && meta.strokeSupport.total_chunks > 1 ? (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                meta.strokeSupport.consistent
+                  ? "bg-amber-200/80 text-amber-900"
+                  : "bg-slate-200/80 text-slate-700"
+              }`}
+            >
+              {meta.strokeSupport.consistent
+                ? `Seen in ${meta.strokeSupport.count}/${meta.strokeSupport.total_chunks} strokes`
+                : `Single-stroke cue (${meta.strokeSupport.count}/${meta.strokeSupport.total_chunks})`}
+            </span>
+          ) : null}
+          {meta.adjudication?.status === "confirmed" ? (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
+              Verified
+            </span>
+          ) : null}
+        </div>
+        {meta.why ? (
+          <p className="mt-0.5 text-sm text-slate-600">{meta.why}</p>
+        ) : null}
         {ref ? (
           <ClipViewer
             clip={clip}
@@ -972,11 +1078,25 @@ function FixCard({
             className="mt-2"
           />
         ) : null}
-        {drill ? (
-          <p className="mt-2 rounded-lg bg-white/70 p-2 text-sm">
-            <span className="font-semibold">Drill: </span>
-            {drill}
-          </p>
+        {meta.drillTitle || meta.drill ? (
+          <div className="mt-2 rounded-lg bg-white/80 p-2.5 text-sm">
+            <p className="font-semibold text-slate-900">
+              Drill: {meta.drillTitle ?? meta.drill}
+            </p>
+            {meta.primaryFocalPoint ? (
+              <p className="mt-0.5 text-xs text-slate-700">
+                <span className="font-medium">Focal point:</span>{" "}
+                {meta.primaryFocalPoint}
+              </p>
+            ) : meta.drillTitle && meta.drill ? (
+              <p className="mt-0.5 text-xs text-slate-700">{meta.drill}</p>
+            ) : null}
+            {meta.safetyNote ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Safety: {meta.safetyNote}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
@@ -1543,10 +1663,9 @@ function RefusalCard({
 
 function ShareRead({ topFix }: { topFix: string | null }) {
   const onShare = async () => {
-    const url =
-      typeof window !== "undefined"
-        ? window.location.href
-        : "https://analyzer.swimbuddz.com";
+    // Private result URLs carry a bearer guest_token: never put that secret
+    // into a social share payload. Send friends to the public analyzer instead.
+    const url = "https://analyzer.swimbuddz.com";
     const text = topFix
       ? `I just got my freestyle stroke analysed by SwimBuddz Stroke Lab — my #1 fix: "${topFix}" Get your free stroke read:`
       : "I just got my freestyle stroke analysed by SwimBuddz Stroke Lab. Get your free stroke read:";

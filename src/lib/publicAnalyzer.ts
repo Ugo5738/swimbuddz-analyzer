@@ -72,6 +72,50 @@ export type CoachResult = {
   meta: Record<string, unknown>;
 };
 
+export type StrokeSupport = {
+  count: number;
+  total_chunks: number;
+  consistent: boolean;
+  single_stroke_only: boolean;
+};
+
+export type StrokeAdjudication = {
+  status: "confirmed" | "contradicted" | "unclear" | string;
+  model?: string;
+  confidence?: number;
+  reason?: string;
+};
+
+export type SwimComparisonAspect = {
+  aspect: string;
+  label: string;
+  status:
+    | "improved"
+    | "still_working"
+    | "maintained"
+    | "regressed"
+    | "newly_observed"
+    | string;
+  previous_severity: string | null;
+  current_severity: string | null;
+  previous_verdict: string | null;
+  current_verdict: string | null;
+  summary: string;
+};
+
+export type SwimComparison = {
+  previous_job_id: string;
+  previous_completed_at: string | null;
+  comparable: boolean;
+  improved_count: number;
+  still_working_count: number;
+  maintained_count: number;
+  regressed_count: number;
+  headline: string;
+  caveat: string | null;
+  aspects: SwimComparisonAspect[];
+};
+
 // One segmented phase instance (a recovery / entry / glide / breath chunk). The
 // backend exposes a whitelisted projection only when the per-stroke drilldown is
 // unlocked; null otherwise. Powers the recovery browser.
@@ -172,7 +216,7 @@ export type InspectStatus = {
 };
 
 // ─── Constants ────────────────────────────────────────────────────────
-export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // public direct-upload cap
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // direct S3 PUT only
 export const MAX_UPLOAD_LABEL = "2 GB";
 export const MAX_DURATION_SECONDS = 90; // browser compression window; worker reads 120s
 export const ACCEPTED_VIDEO_MIME =
@@ -241,6 +285,7 @@ export async function createPublicAnalysis(
   guestEmail: string,
   discipline: Discipline = "distance",
   callbacks?: PublicUploadCallbacks | ((percent: number) => void),
+  emailAuthToken?: string,
 ): Promise<PublicAnalysisJob> {
   const uploadCallbacks =
     typeof callbacks === "function" ? { onProgress: callbacks } : callbacks;
@@ -252,13 +297,18 @@ export async function createPublicAnalysis(
   }
   try {
     uploadCallbacks?.onStage?.("preparing");
-    const upload = await createDirectUpload(file, guestEmail, discipline);
+    const upload = await createDirectUpload(file, guestEmail, discipline, emailAuthToken);
     uploadCallbacks?.onStage?.("uploading");
     await putDirectUpload(file, upload, uploadCallbacks?.onProgress);
     uploadCallbacks?.onStage?.("finalizing");
     const resp = await fetch(
       `${API_BASE_URL}/api/v1/ai/public/analyze/${upload.job_id}/complete-upload?guest_token=${encodeURIComponent(upload.guest_token)}`,
-      { method: "POST", cache: "no-store" },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_auth_token: emailAuthToken || null }),
+        cache: "no-store",
+      },
     );
     if (!resp.ok) throw await toError(resp);
     return (await resp.json()) as PublicAnalysisJob;
@@ -267,7 +317,15 @@ export async function createPublicAnalysis(
       e instanceof ApiError &&
       (e.status === 404 || e.status === 405 || e.status === 501)
     ) {
-      return createMultipartPublicAnalysis(file, guestEmail, discipline);
+      // Never fall back to a 50 MiB API-buffered multipart endpoint for a
+      // high-resolution file accepted by the direct-to-S3 flow.
+      if (file.size > 50 * 1024 * 1024) {
+        throw new ApiError(
+          503,
+          "Direct video upload is temporarily unavailable. Please try again later.",
+        );
+      }
+      return createMultipartPublicAnalysis(file, guestEmail, discipline, emailAuthToken);
     }
     throw e;
   }
@@ -277,12 +335,14 @@ async function createDirectUpload(
   file: File,
   guestEmail: string,
   discipline: Discipline,
+  emailAuthToken?: string,
 ): Promise<PublicDirectUpload> {
   const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/analyze/uploads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       guest_email: guestEmail,
+      email_auth_token: emailAuthToken || null,
       filename: file.name || "clip.mp4",
       content_type: file.type || "video/mp4",
       size_bytes: file.size,
@@ -336,10 +396,12 @@ async function createMultipartPublicAnalysis(
   file: File,
   guestEmail: string,
   discipline: Discipline,
+  emailAuthToken?: string,
 ): Promise<PublicAnalysisJob> {
   const fd = new FormData();
   fd.append("video", file);
   fd.append("guest_email", guestEmail);
+  if (emailAuthToken) fd.append("email_auth_token", emailAuthToken);
   fd.append("stroke_type", "freestyle");
   fd.append("discipline", discipline);
 
@@ -501,4 +563,24 @@ export function failureMessage(reason: string | null): string {
     default:
       return "We couldn't analyze that clip — your credit was refunded. Try a clearer, side-on freestyle clip.";
   }
+}
+
+export async function requestEmailVerification(email: string): Promise<void> {
+  const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/credits/email-code/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!resp.ok) throw await toError(resp);
+}
+
+export async function verifyEmailCode(email: string, code: string): Promise<string> {
+  const resp = await fetch(`${API_BASE_URL}/api/v1/ai/public/credits/email-code/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code }),
+  });
+  if (!resp.ok) throw await toError(resp);
+  const data = (await resp.json()) as { email_auth_token: string };
+  return data.email_auth_token;
 }
