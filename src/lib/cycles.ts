@@ -9,7 +9,13 @@
 // buildCycles() runs on real instances + findings; for now the demo mock supplies
 // enough to populate it.
 
-import type { CoachFinding, PublicAnalysisJobDetail } from "./publicAnalyzer";
+import type {
+  CoachFinding,
+  PublicAnalysisJobDetail,
+  StrokeAdjudication,
+  StrokeSupport,
+  SwimComparison,
+} from "./publicAnalyzer";
 
 export const ABOVE_WATER = [
   { key: "entry_reach", label: "Entry & reach" },
@@ -106,6 +112,74 @@ export function coachSummary(detail: PublicAnalysisJobDetail): string | null {
   return typeof s === "string" && s.trim() ? s.trim() : null;
 }
 
+// Deterministic $0 longitudinal comparison against the swimmer's previous swim
+// (attached by ai_service engine >=0.4.0 onto coach_result.meta.comparison).
+export function coachComparison(
+  detail: PublicAnalysisJobDetail,
+): SwimComparison | null {
+  const raw = detail.result?.coach_result?.meta?.comparison;
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Partial<SwimComparison>;
+  if (!c.comparable || typeof c.headline !== "string" || !Array.isArray(c.aspects)) {
+    return null;
+  }
+  return c as SwimComparison;
+}
+
+export type FixExtraMeta = {
+  why: string | null;
+  drill: string | null;
+  drillTitle: string | null;
+  primaryFocalPoint: string | null;
+  safetyNote: string | null;
+  strokeSupport: StrokeSupport | null;
+  adjudication: StrokeAdjudication | null;
+};
+
+export function extractFixMeta(f: CoachFinding): FixExtraMeta {
+  const extra = f.extra ?? {};
+  const str = (k: string): string | null =>
+    typeof extra[k] === "string" && (extra[k] as string).trim()
+      ? (extra[k] as string).trim()
+      : null;
+
+  let strokeSupport: StrokeSupport | null = null;
+  if (extra.stroke_support && typeof extra.stroke_support === "object") {
+    const s = extra.stroke_support as Partial<StrokeSupport>;
+    if (typeof s.count === "number" && typeof s.total_chunks === "number") {
+      strokeSupport = {
+        count: s.count,
+        total_chunks: s.total_chunks,
+        consistent: Boolean(s.consistent),
+        single_stroke_only: Boolean(s.single_stroke_only),
+      };
+    }
+  }
+
+  let adjudication: StrokeAdjudication | null = null;
+  if (extra.adjudication && typeof extra.adjudication === "object") {
+    const a = extra.adjudication as Partial<StrokeAdjudication>;
+    if (typeof a.status === "string" && a.status) {
+      adjudication = {
+        status: a.status,
+        model: typeof a.model === "string" ? a.model : undefined,
+        confidence: typeof a.confidence === "number" ? a.confidence : undefined,
+        reason: typeof a.reason === "string" ? a.reason : undefined,
+      };
+    }
+  }
+
+  return {
+    why: str("why_it_matters"),
+    drill: str("drill"),
+    drillTitle: str("drill_title"),
+    primaryFocalPoint: str("primary_focal_point"),
+    safetyNote: str("safety_note"),
+    strokeSupport,
+    adjudication,
+  };
+}
+
 // Open the richest cycle by default so the cycle lens lands on a full read.
 export function defaultOpenCycle(cycles: Cycle[]): number | null {
   if (!cycles.length) return null;
@@ -126,12 +200,14 @@ export function isNoiseFinding(f: CoachFinding): boolean {
   return NOISE_RE.test(f.observation ?? "");
 }
 
-// A per-cycle recovery fix belongs in the stroke-by-stroke lens, never the top
-// verdict — it's one stroke, not a stroke-wide habit. Everything else the coach
-// flags as a "fix" — including the holistic read, whose findings carry NO area —
-// is a top-line fault and must surface.
+// A per-cycle recovery fix from recovery_coach/chunk_coach belongs in the
+// stroke-by-stroke lens, never the top verdict — it's one stroke, not a
+// stroke-wide habit. Aggregator top fixes for recovery_elbow DO carry
+// instance_id for video-clip grounding and MUST NOT be filtered out.
 const isPerCycleRecovery = (f: CoachFinding): boolean =>
-  f.area === "recovery_elbow" && typeof f.instance_id === "number";
+  f.component !== "aggregator" &&
+  f.area === "recovery_elbow" &&
+  typeof f.instance_id === "number";
 
 export type Verdict = {
   fixes: CoachFinding[]; // ranked top fixes — the page's spine
